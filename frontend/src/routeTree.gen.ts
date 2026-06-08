@@ -15,6 +15,7 @@ import { Route as ResumeVaultRouteImport } from './routes/resume-vault'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as JobsRouteImport } from './routes/jobs'
 import { Route as EmailOutreachRouteImport } from './routes/email-outreach'
+import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ApplicationsRouteImport } from './routes/applications'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -48,6 +49,11 @@ const EmailOutreachRoute = EmailOutreachRouteImport.update({
   path: '/email-outreach',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApplicationsRoute = ApplicationsRouteImport.update({
   id: '/applications',
   path: '/applications',
@@ -62,6 +68,7 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/applications': typeof ApplicationsRoute
+  '/auth': typeof AuthRoute
   '/email-outreach': typeof EmailOutreachRoute
   '/jobs': typeof JobsRoute
   '/profile': typeof ProfileRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/applications': typeof ApplicationsRoute
+  '/auth': typeof AuthRoute
   '/email-outreach': typeof EmailOutreachRoute
   '/jobs': typeof JobsRoute
   '/profile': typeof ProfileRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/applications': typeof ApplicationsRoute
+  '/auth': typeof AuthRoute
   '/email-outreach': typeof EmailOutreachRoute
   '/jobs': typeof JobsRoute
   '/profile': typeof ProfileRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/applications'
+    | '/auth'
     | '/email-outreach'
     | '/jobs'
     | '/profile'
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/applications'
+    | '/auth'
     | '/email-outreach'
     | '/jobs'
     | '/profile'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/applications'
+    | '/auth'
     | '/email-outreach'
     | '/jobs'
     | '/profile'
@@ -126,6 +138,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApplicationsRoute: typeof ApplicationsRoute
+  AuthRoute: typeof AuthRoute
   EmailOutreachRoute: typeof EmailOutreachRoute
   JobsRoute: typeof JobsRoute
   ProfileRoute: typeof ProfileRoute
@@ -178,6 +191,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmailOutreachRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/applications': {
       id: '/applications'
       path: '/applications'
@@ -198,6 +218,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApplicationsRoute: ApplicationsRoute,
+  AuthRoute: AuthRoute,
   EmailOutreachRoute: EmailOutreachRoute,
   JobsRoute: JobsRoute,
   ProfileRoute: ProfileRoute,
