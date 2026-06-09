@@ -36,6 +36,7 @@ import {
   Check,
   AlertTriangle,
   Upload,
+  Loader2,
   Mail,
   Plus,
   Trash2,
@@ -77,7 +78,7 @@ function Field({ label, required, children, hint }: { label: string; required?: 
 }
 
 export function ProfilePage() {
-  const { profile, update, completion, sectionStatus } = useProfile();
+  const { profile, update, saveSection, saving, loading, completion, sectionStatus } = useProfile();
   const [tab, setTab] = useState<SectionKey>("personal");
   const [dirty, setDirty] = useState<Record<SectionKey, boolean>>({} as Record<SectionKey, boolean>);
 
@@ -96,9 +97,17 @@ export function ProfilePage() {
     setDirty((d) => ({ ...d, [key]: true }));
   }
 
-  function saveSection(key: SectionKey) {
+  async function handleSave(key: SectionKey) {
+    await saveSection(key);
     setDirty((d) => ({ ...d, [key]: false }));
-    toast.success(`${SECTION_LABELS[key]} saved`);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (
@@ -193,35 +202,35 @@ export function ProfilePage() {
             <div className="p-6">
               <TabsContent value="personal" className="mt-0">
                 <PersonalTab onChange={() => markDirty("personal")} />
-                <SectionFooter onSave={() => saveSection("personal")} />
+                <SectionFooter onSave={() => handleSave("personal")} saving={saving} />
               </TabsContent>
               <TabsContent value="contact" className="mt-0">
                 <ContactTab onChange={() => markDirty("contact")} />
-                <SectionFooter onSave={() => saveSection("contact")} />
+                <SectionFooter onSave={() => handleSave("contact")} saving={saving} />
               </TabsContent>
               <TabsContent value="address" className="mt-0">
                 <AddressTab onChange={() => markDirty("address")} />
-                <SectionFooter onSave={() => saveSection("address")} />
+                <SectionFooter onSave={() => handleSave("address")} saving={saving} />
               </TabsContent>
               <TabsContent value="experience" className="mt-0">
                 <ExperienceTab onChange={() => markDirty("experience")} />
-                <SectionFooter onSave={() => saveSection("experience")} />
+                <SectionFooter onSave={() => handleSave("experience")} saving={saving} />
               </TabsContent>
               <TabsContent value="education" className="mt-0">
                 <EducationTab onChange={() => markDirty("education")} />
-                <SectionFooter onSave={() => saveSection("education")} />
+                <SectionFooter onSave={() => handleSave("education")} saving={saving} />
               </TabsContent>
               <TabsContent value="skills" className="mt-0">
                 <SkillsTab onChange={() => markDirty("skills")} />
-                <SectionFooter onSave={() => saveSection("skills")} />
+                <SectionFooter onSave={() => handleSave("skills")} saving={saving} />
               </TabsContent>
               <TabsContent value="projects" className="mt-0">
                 <ProjectsTab onChange={() => markDirty("projects")} />
-                <SectionFooter onSave={() => saveSection("projects")} />
+                <SectionFooter onSave={() => handleSave("projects")} saving={saving} />
               </TabsContent>
               <TabsContent value="links" className="mt-0">
                 <LinksTab onChange={() => markDirty("links")} />
-                <SectionFooter onSave={() => saveSection("links")} />
+                <SectionFooter onSave={() => handleSave("links")} saving={saving} />
               </TabsContent>
             </div>
           </Tabs>
@@ -240,11 +249,19 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionFooter({ onSave }: { onSave: () => void }) {
+function SectionFooter({ onSave, saving }: { onSave: () => void; saving?: boolean }) {
   return (
     <div className="mt-6 flex justify-end border-t border-border pt-4">
-      <Button onClick={onSave} className="bg-primary text-primary-foreground hover:bg-primary/90">
-        Save Section
+      <Button
+        onClick={onSave}
+        disabled={saving}
+        className="bg-primary text-primary-foreground hover:bg-primary/90"
+      >
+        {saving ? (
+          <><Loader2 className="size-4 animate-spin mr-2" />Saving...</>
+        ) : (
+          "Save Section"
+        )}
       </Button>
     </div>
   );
