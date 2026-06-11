@@ -19,6 +19,7 @@ export type Job = {
   location: string
   dateFound: string
   status: JobStatus
+  jobUrl?: string
 }
 
 export type ApplicationStatus =

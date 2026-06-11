@@ -1,0 +1,22 @@
+{
+  "name": "job-automation-workers",
+  "version": "1.0.0",
+  "description": "Background workers for job scraping, matching, and applying",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "scrape": "node src/scraper.js",
+    "match": "node src/matcher.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.4.0",
+    "node-cron": "^3.0.3",
+    "openai": "^6.42.0",
+    "rss-parser": "^3.13.0"
+  }
+}
