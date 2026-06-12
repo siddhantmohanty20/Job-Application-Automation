@@ -52,8 +52,6 @@ async function log(message, type = "scrape") {
 async function saveJobs(jobs) {
   if (jobs.length === 0) return 0;
 
-  // replace null external_id with a generated unique value
-  // so the unique index works correctly
   const normalized = jobs.map((j) => ({
     ...j,
     external_id: j.external_id || `${j.platform}-${j.company}-${j.role}-${Date.now()}-${Math.random()}`,
@@ -89,13 +87,23 @@ async function scrapeGreenhouse() {
     try {
       const { data } = await axios.get(
         `https://boards-api.greenhouse.io/v1/boards/${company}/jobs`,
-        { timeout: 8000 }
+        {
+          timeout: 8000,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+          }
+        }
       );
+
       for (const job of data.jobs ?? []) {
+        // skip jobs with no URL
+        if (!job.absolute_url) continue;
+
+        const companyName = company.charAt(0).toUpperCase() + company.slice(1);
+
         jobs.push({
-          company: job.departments?.[0]?.name
-            ? `${company.charAt(0).toUpperCase() + company.slice(1)}`
-            : company.charAt(0).toUpperCase() + company.slice(1),
+          company: companyName,
           role: job.title,
           platform: "Greenhouse",
           location: job.location?.name ?? "Remote",
@@ -236,9 +244,24 @@ export async function runScraper() {
   ]);
 
   const all = [...ghJobs, ...levJobs, ...adzJobs, ...indeedJobs];
-  await log(`Fetched ${all.length} raw jobs — deduplicating and saving...`);
 
-  const saved = await saveJobs(all);
+  // deduplicate by company+role
+  const seen = new Set();
+  const deduped = all.filter((job) => {
+    const key = `${job.company}-${job.role}`.toLowerCase().trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // filter out jobs with no valid URL
+  const withUrls = deduped.filter((j) => j.job_url && j.job_url.length > 0);
+
+  await log(
+    `Fetched ${all.length} raw — ${deduped.length} deduped — ${withUrls.length} with valid URLs — saving...`
+  );
+
+  const saved = await saveJobs(withUrls);
   await log(`Scrape complete — saved ${saved} new jobs to database`);
 
   return saved;

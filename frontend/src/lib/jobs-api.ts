@@ -38,9 +38,13 @@ export type ActivityEntry = {
 // ── jobs ─────────────────────────────────────────────────────
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<Job[]> {
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const cutoff = sevenDaysAgo.toISOString().slice(0, 10)
   let query = supabase
     .from("jobs")
     .select("*")
+    .gte("date_found", cutoff)
     .order("date_found", { ascending: false })
     .order("match_score", { ascending: false });
 
@@ -73,26 +77,20 @@ export async function updateJobStatus(
 }
 
 export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const cutoff = sevenDaysAgo.toISOString().slice(0, 10)
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
-    .gte("date_found", today)
     .gte("match_score", 60)
+    .eq("status", "New")// ← only show New jobs, exclude Applied/Skipped
+    .gte("date_found", cutoff)        
     .order("match_score", { ascending: false })
     .limit(limit);
+
   if (error) throw new Error(error.message);
-  // fallback to recent if nothing today
-  if (!data || data.length === 0) {
-    const { data: fallback } = await supabase
-      .from("jobs")
-      .select("*")
-      .gte("match_score", 60)
-      .order("match_score", { ascending: false })
-      .limit(limit);
-    return (fallback ?? []).map(dbToJob);
-  }
-  return data.map(dbToJob);
+  return (data ?? []).map(dbToJob);
 }
 
 // ── dashboard metrics ─────────────────────────────────────────

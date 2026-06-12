@@ -1,38 +1,56 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Card } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CompanyAvatar, MatchBadge, PlatformBadge } from "@/components/shared-badges"
 import { type Job } from "@/lib/data"
-import { fetchRecentMatches, updateJobStatus, logActivity } from "@/lib/jobs-api"
+import { fetchRecentMatches } from "@/lib/jobs-api"
+import { createApplication } from "@/lib/applications-api"
 import { ExternalLink, Check } from "lucide-react"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 
 export function RecentMatches() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [applyingId, setApplyingId] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchRecentMatches(5)
-      .then(setJobs)
-      .catch(() => toast.error("Could not load recent matches"))
-      .finally(() => setLoading(false))
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchRecentMatches(5)
+      setJobs(data)
+    } catch {
+      toast.error("Could not load recent matches")
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  async function handleApply(job: Job) {
+  useEffect(() => { load() }, [load])
+
+  async function recordApplication(job: Job) {
+    if (applyingId === job.id || job.status === "Applied") return
     setApplyingId(job.id)
     try {
-      await updateJobStatus(job.id, "Applied")
-      await logActivity("apply", `Applied to ${job.role} at ${job.company}`)
-      setJobs((prev) =>
-        prev.map((j) => (j.id === job.id ? { ...j, status: "Applied" } : j))
+      await createApplication({
+        jobId: job.id,
+        company: job.company,
+        role: job.role,
+        method: "Easy Apply",
+      })
+      // remove from list and fetch replacement
+      const remaining = jobs.filter((j) => j.id !== job.id)
+      const fresh = await fetchRecentMatches(6)
+      const currentIds = new Set(remaining.map((j) => j.id))
+      const replacement = fresh.find(
+        (j) => !currentIds.has(j.id) && j.status !== "Applied"
       )
-      toast.success("Marked as Applied", {
+      setJobs(replacement ? [...remaining, replacement] : remaining)
+      toast.success("Application recorded!", {
         description: `${job.role} at ${job.company}`,
       })
     } catch {
-      toast.error("Failed to update job status")
+      toast.error("Failed to record application")
     } finally {
       setApplyingId(null)
     }
@@ -78,31 +96,45 @@ export function RecentMatches() {
                 <div className="flex items-center justify-between gap-3 sm:justify-end">
                   <MatchBadge score={job.match} />
                   <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => {
-                        if (job.jobUrl) window.open(job.jobUrl, "_blank")
-                        else toast.info("No URL available")
-                      }}
-                    >
-                      <ExternalLink className="size-3.5" /> View JD
-                    </Button>
-                    <Button
-                      size="sm"
-                      disabled={applyingId === job.id || job.status === "Applied"}
-                      onClick={() => handleApply(job)}
-                      className="bg-primary text-primary-foreground hover:bg-primary/90"
-                    >
-                      {job.status === "Applied" ? (
-                        <><Check className="size-3.5 mr-1" /> Applied</>
-                      ) : applyingId === job.id ? (
-                        "Applying..."
-                      ) : (
-                        "Apply Now"
-                      )}
-                    </Button>
+                    {/* View JD — native anchor, never blocked */}
+                    {job.jobUrl ? (
+                      <a
+                        href={job.jobUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground shadow-sm hover:bg-accent transition-colors"
+                      >
+                        <ExternalLink className="size-3.5" /> View JD
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-muted-foreground opacity-50 cursor-not-allowed">
+                        <ExternalLink className="size-3.5" /> View JD
+                      </span>
+                    )}
+
+                    {/* Apply Now — native anchor opens tab + records application */}
+                    {job.status === "Applied" ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md bg-success/15 px-3 py-1.5 text-sm font-medium text-success">
+                        <Check className="size-3.5" /> Applied
+                      </span>
+                    ) : job.jobUrl ? (
+                      <a
+                        href={job.jobUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        onClick={() => recordApplication(job)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors",
+                          applyingId === job.id && "opacity-70 pointer-events-none"
+                        )}
+                      >
+                        {applyingId === job.id ? "Recording..." : "Apply Now"}
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground cursor-not-allowed opacity-50">
+                        No URL
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

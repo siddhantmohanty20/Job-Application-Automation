@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { CompanyAvatar, MatchBadge, PlatformBadge } from "@/components/shared-badges"
 import { type Job, type JobStatus, type Platform } from "@/lib/data"
 import { fetchJobs, updateJobStatus, logActivity } from "@/lib/jobs-api"
+import { createApplication } from "@/lib/applications-api"
 import { cn } from "@/lib/utils"
 import { Search, RefreshCw, ExternalLink, Check, X } from "lucide-react"
 import { toast } from "sonner"
@@ -62,18 +63,11 @@ export function JobsTable() {
     }
   }, [])
 
-  useEffect(() => {
-    loadJobs()
-  }, [loadJobs])
+  useEffect(() => { loadJobs() }, [loadJobs])
 
   const filtered = useMemo(() => {
     return jobs.filter((j) => {
-      if (
-        search &&
-        !`${j.company} ${j.role} ${j.location}`
-          .toLowerCase()
-          .includes(search.toLowerCase())
-      )
+      if (search && !`${j.company} ${j.role} ${j.location}`.toLowerCase().includes(search.toLowerCase()))
         return false
       if (platform !== "all" && j.platform !== platform) return false
       if (status !== "all" && j.status !== status) return false
@@ -84,35 +78,38 @@ export function JobsTable() {
     })
   }, [jobs, search, platform, score, status])
 
-  async function handleStatusChange(job: Job, newStatus: JobStatus) {
+  async function handleSkip(job: Job) {
     setActionId(job.id)
     try {
-      await updateJobStatus(job.id, newStatus)
-      setJobs((prev) =>
-        prev.map((j) => (j.id === job.id ? { ...j, status: newStatus } : j))
-      )
-      await logActivity(
-        newStatus === "Applied" ? "apply" : "scrape",
-        newStatus === "Applied"
-          ? `Marked ${job.role} at ${job.company} as Applied`
-          : `Skipped ${job.role} at ${job.company}`
-      )
-      toast.success(
-        newStatus === "Applied" ? "Marked as Applied" : "Job skipped",
-        { description: `${job.role} at ${job.company}` }
-      )
+      await updateJobStatus(job.id, "Skipped")
+      setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, status: "Skipped" } : j)))
+      await logActivity("scrape", `Skipped ${job.role} at ${job.company}`)
+      toast.success("Job skipped", { description: `${job.role} at ${job.company}` })
     } catch (e) {
-      toast.error("Action failed", {
-        description: e instanceof Error ? e.message : "Unknown error",
-      })
+      toast.error("Action failed", { description: e instanceof Error ? e.message : "Unknown error" })
     } finally {
       setActionId(null)
     }
   }
 
-  async function refresh() {
-    await loadJobs()
-    toast.success("Jobs refreshed", { description: "Loaded latest from database." })
+  async function recordApplication(job: Job) {
+    if (actionId === job.id || job.status === "Applied") return
+    setActionId(job.id)
+    try {
+      await createApplication({
+        jobId: job.id,
+        company: job.company,
+        role: job.role,
+        method: "Easy Apply",
+      })
+      setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, status: "Applied" } : j)))
+      await logActivity("apply", `Applied to ${job.role} at ${job.company}`)
+      toast.success("Application recorded!", { description: `${job.role} at ${job.company}` })
+    } catch (e) {
+      toast.error("Failed to record", { description: e instanceof Error ? e.message : "Unknown error" })
+    } finally {
+      setActionId(null)
+    }
   }
 
   return (
@@ -121,18 +118,12 @@ export function JobsTable() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search company, role, location..."
-            className="pl-9"
-          />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search company, role, location..." className="pl-9" />
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:flex">
           <Select value={platform} onValueChange={(v) => setPlatform(v as Platform | "all")}>
-            <SelectTrigger className="w-full lg:w-36">
-              <SelectValue placeholder="Platform" />
-            </SelectTrigger>
+            <SelectTrigger className="w-full lg:w-36"><SelectValue placeholder="Platform" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Platforms</SelectItem>
               <SelectItem value="LinkedIn">LinkedIn</SelectItem>
@@ -144,9 +135,7 @@ export function JobsTable() {
             </SelectContent>
           </Select>
           <Select value={score} onValueChange={(v) => setScore(v as "all" | "high" | "mid" | "low")}>
-            <SelectTrigger className="w-full lg:w-32">
-              <SelectValue placeholder="Match" />
-            </SelectTrigger>
+            <SelectTrigger className="w-full lg:w-32"><SelectValue placeholder="Match" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Scores</SelectItem>
               <SelectItem value="high">&gt;80%</SelectItem>
@@ -155,9 +144,7 @@ export function JobsTable() {
             </SelectContent>
           </Select>
           <Select value={status} onValueChange={(v) => setStatus(v as JobStatus | "all")}>
-            <SelectTrigger className="w-full lg:w-32">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
+            <SelectTrigger className="w-full lg:w-32"><SelectValue placeholder="Status" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="New">New</SelectItem>
@@ -165,12 +152,8 @@ export function JobsTable() {
               <SelectItem value="Skipped">Skipped</SelectItem>
             </SelectContent>
           </Select>
-          <Button
-            onClick={refresh}
-            variant="outline"
-            className="col-span-2 gap-2 sm:col-span-1 lg:w-auto"
-            disabled={loading}
-          >
+          <Button onClick={loadJobs} variant="outline"
+            className="col-span-2 gap-2 sm:col-span-1 lg:w-auto" disabled={loading}>
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
             Refresh Jobs
           </Button>
@@ -197,9 +180,7 @@ export function JobsTable() {
               ? Array.from({ length: 6 }).map((_, i) => (
                   <TableRow key={i}>
                     {Array.from({ length: 8 }).map((__, j) => (
-                      <TableCell key={j}>
-                        <Skeleton className="h-6 w-full" />
-                      </TableCell>
+                      <TableCell key={j}><Skeleton className="h-6 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
@@ -212,55 +193,51 @@ export function JobsTable() {
                       </div>
                     </TableCell>
                     <TableCell className="text-foreground">{job.role}</TableCell>
-                    <TableCell>
-                      <PlatformBadge platform={job.platform} />
-                    </TableCell>
-                    <TableCell>
-                      <MatchBadge score={job.match} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {job.location}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {job.dateFound}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={job.status} />
-                    </TableCell>
+                    <TableCell><PlatformBadge platform={job.platform} /></TableCell>
+                    <TableCell><MatchBadge score={job.match} /></TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">{job.location}</TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">{job.dateFound}</TableCell>
+                    <TableCell><StatusBadge status={job.status} /></TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="View JD"
-                          title="View JD"
-                          onClick={() => {
-                            if (job.jobUrl) window.open(job.jobUrl, "_blank")
-                            else toast.info("No URL available for this job")
-                          }}
-                        >
-                          <ExternalLink className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Apply"
-                          title="Apply"
-                          disabled={actionId === job.id || job.status === "Applied"}
-                          className="text-success hover:text-success"
-                          onClick={() => handleStatusChange(job, "Applied")}
-                        >
-                          <Check className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Skip"
-                          title="Skip"
+                        {/* View JD — native anchor */}
+                        {job.jobUrl ? (
+                          <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
+                            className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                            title="View JD">
+                            <ExternalLink className="size-4" />
+                          </a>
+                        ) : (
+                          <span className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground opacity-30 cursor-not-allowed">
+                            <ExternalLink className="size-4" />
+                          </span>
+                        )}
+
+                        {/* Apply — native anchor + records application */}
+                        {job.jobUrl && job.status !== "Applied" ? (
+                          <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
+                            onClick={() => recordApplication(job)}
+                            className="inline-flex items-center justify-center rounded-md p-2 text-success hover:bg-accent transition-colors"
+                            title="Apply">
+                            <Check className="size-4" />
+                          </a>
+                        ) : (
+                          <span className={cn(
+                            "inline-flex items-center justify-center rounded-md p-2 transition-colors",
+                            job.status === "Applied"
+                              ? "text-success opacity-50 cursor-not-allowed"
+                              : "text-muted-foreground opacity-30 cursor-not-allowed"
+                          )}>
+                            <Check className="size-4" />
+                          </span>
+                        )}
+
+                        {/* Skip button */}
+                        <Button variant="ghost" size="icon"
+                          aria-label="Skip" title="Skip"
                           disabled={actionId === job.id || job.status === "Skipped"}
                           className="text-muted-foreground"
-                          onClick={() => handleStatusChange(job, "Skipped")}
-                        >
+                          onClick={() => handleSkip(job)}>
                           <X className="size-4" />
                         </Button>
                       </div>
@@ -271,18 +248,12 @@ export function JobsTable() {
         </Table>
         {!loading && filtered.length === 0 && (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            {jobs.length === 0
-              ? "No jobs scraped yet. Run the automation to fetch jobs."
-              : "No jobs match your filters."}
+            {jobs.length === 0 ? "No jobs scraped yet. Run the automation to fetch jobs." : "No jobs match your filters."}
           </p>
         )}
       </div>
-
-      {/* Footer count */}
       {!loading && (
-        <p className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {jobs.length} jobs
-        </p>
+        <p className="text-xs text-muted-foreground">Showing {filtered.length} of {jobs.length} jobs</p>
       )}
     </Card>
   )
