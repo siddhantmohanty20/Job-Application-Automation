@@ -1,4 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { updateAutomationState } from "@/lib/settings-api";
+import { useAuth } from "@/context/auth-context";
 
 type AutomationContextValue = {
   active: boolean;
@@ -9,11 +11,23 @@ type AutomationContextValue = {
 const AutomationContext = createContext<AutomationContextValue | null>(null);
 
 export function AutomationProvider({ children }: { children: ReactNode }) {
-  const [active, setActive] = useState(true);
+  const [active, setActiveState] = useState(false);
+  const { user } = useAuth();
+
+  const setActive = useCallback(
+    async (v: boolean) => {
+      setActiveState(v);
+      if (user) await updateAutomationState(user.id, v);
+    },
+    [user]
+  );
+
+  const toggle = useCallback(() => {
+    setActive(!active);
+  }, [active, setActive]);
+
   return (
-    <AutomationContext.Provider
-      value={{ active, setActive, toggle: () => setActive((p) => !p) }}
-    >
+    <AutomationContext.Provider value={{ active, setActive, toggle }}>
       {children}
     </AutomationContext.Provider>
   );
