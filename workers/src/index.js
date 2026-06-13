@@ -4,7 +4,8 @@
  * Runs on Render as a background worker.
  * Schedules daily scraping and matching via node-cron.
  */
-
+import { analyzeResumeGap } from "./tailor.js";
+import { supabase } from "./supabase.js";
 import cron from "node-cron";
 import { runScraper } from "./scraper.js";
 import { runMatcher } from "./matcher.js";
@@ -51,3 +52,24 @@ if (RUN_ON_START) {
 }
 
 console.log("[workers] Scheduler running. Waiting for cron triggers...");
+
+// hourly — analyze gaps for new applications
+cron.schedule("0 * * * *", async () => {
+  console.log("[cron] Running gap analysis for new applications...");
+  try {
+    const { data: apps } = await supabase
+      .from("applications")
+      .select("job_id")
+      .is("tailored_resume_id", null)
+      .limit(3);
+
+    for (const app of apps ?? []) {
+      if (app.job_id) {
+        await analyzeResumeGap(app.job_id);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  } catch (e) {
+    console.error("[cron] Gap analysis failed:", e.message);
+  }
+});
