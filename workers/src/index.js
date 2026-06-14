@@ -1,16 +1,18 @@
 /**
  * index.js
- * Main entry point for the workers process.
- * Runs on Render as a background worker.
- * Schedules daily scraping and matching via node-cron.
+ * Main entry point — starts both the API server and cron scheduler.
  */
-import { analyzeResumeGap } from "./tailor.js";
-import { supabase } from "./supabase.js";
+
 import cron from "node-cron";
 import { runScraper } from "./scraper.js";
 import { runMatcher } from "./matcher.js";
+import { analyzeResumeGap } from "./tailor.js";
+import { supabase } from "./supabase.js";
 import dotenv from "dotenv";
 dotenv.config();
+
+// start express server
+import "./server.js";
 
 console.log("[workers] Starting AutoApply worker process...");
 
@@ -20,9 +22,6 @@ cron.schedule("0 7 * * *", async () => {
   try {
     const saved = await runScraper();
     console.log(`[cron] Scrape complete — ${saved} new jobs`);
-
-    // immediately run matcher after scrape
-    console.log("[cron] Running matcher on new jobs...");
     const matched = await runMatcher();
     console.log(`[cron] Matching complete — ${matched} jobs scored`);
   } catch (e) {
@@ -30,9 +29,8 @@ cron.schedule("0 7 * * *", async () => {
   }
 });
 
-// ── MATCH SWEEP: every 2 hours (catch any missed jobs) ───────
+// ── MATCH SWEEP: every 2 hours ────────────────────────────────
 cron.schedule("0 */2 * * *", async () => {
-  console.log("[cron] Running match sweep...");
   try {
     const matched = await runMatcher();
     if (matched > 0) console.log(`[cron] Sweep matched ${matched} jobs`);
@@ -41,19 +39,7 @@ cron.schedule("0 */2 * * *", async () => {
   }
 });
 
-// ── RUN ONCE ON STARTUP (for testing) ────────────────────────
-const RUN_ON_START = process.env.RUN_ON_START === "true";
-if (RUN_ON_START) {
-  console.log("[workers] RUN_ON_START=true — running scraper + matcher now...");
-  runScraper()
-    .then(() => runMatcher())
-    .then(() => console.log("[workers] Startup run complete"))
-    .catch((e) => console.error("[workers] Startup run failed:", e.message));
-}
-
-console.log("[workers] Scheduler running. Waiting for cron triggers...");
-
-// hourly — analyze gaps for new applications
+// ── GAP ANALYSIS: every hour for new applications ────────────
 cron.schedule("0 * * * *", async () => {
   console.log("[cron] Running gap analysis for new applications...");
   try {
@@ -73,3 +59,15 @@ cron.schedule("0 * * * *", async () => {
     console.error("[cron] Gap analysis failed:", e.message);
   }
 });
+
+// ── RUN ONCE ON STARTUP ───────────────────────────────────────
+const RUN_ON_START = process.env.RUN_ON_START === "true";
+if (RUN_ON_START) {
+  console.log("[workers] RUN_ON_START=true — running scraper + matcher now...");
+  runScraper()
+    .then(() => runMatcher())
+    .then(() => console.log("[workers] Startup run complete"))
+    .catch((e) => console.error("[workers] Startup run failed:", e.message));
+}
+
+console.log("[workers] Scheduler running. Waiting for cron triggers...");

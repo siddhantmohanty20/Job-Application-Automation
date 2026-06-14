@@ -12,7 +12,6 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
 import { useAutomation } from "@/context/automation-context";
 import { useProfile } from "@/context/profile-context";
 import { useAuth } from "@/context/auth-context";
@@ -31,15 +30,15 @@ const navItems = [
 
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { active, toggle } = useAutomation();
+  const { active, setActive } = useAutomation();
   const { completion } = useProfile();
   const { user, signOut } = useAuth();
   const profileIncomplete = completion < 100;
 
-  const handleSignOut = async () => {
+  async function handleSignOut() {
     await signOut();
     toast.success("Signed out successfully");
-  };
+  }
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
@@ -56,7 +55,7 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      {/* Nav items */}
+      {/* Nav */}
       <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -91,22 +90,35 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
 
-      {/* Bottom section */}
+      {/* Bottom — status indicator + stop + user + signout */}
       <div className="border-t border-sidebar-border p-3 space-y-2">
-        {/* Automation toggle */}
-        <div className="flex items-center justify-between rounded-lg bg-sidebar-accent px-3 py-3">
+        {/* Automation status + stop button */}
+        <div className="flex items-center justify-between rounded-lg bg-sidebar-accent px-3 py-2.5">
           <div className="flex items-center gap-2">
             <span
               className={cn(
-                "size-2.5 rounded-full",
-                active ? "bg-success animate-pulse-ring" : "bg-danger",
+                "size-2.5 rounded-full shrink-0",
+                active ? "bg-success animate-pulse" : "bg-danger",
               )}
             />
             <span className="text-sm font-medium text-foreground">
-              {active ? "Automation Active" : "Paused"}
+              {active ? "Automation Active" : "Automation Paused"}
             </span>
           </div>
-          <Switch checked={active} onCheckedChange={toggle} aria-label="Toggle automation" />
+          {active && (
+            <button
+              onClick={() => {
+                setActive(false)
+                toast("Automation stopped", {
+                  description: "All running processes have been halted.",
+                })
+              }}
+              className="rounded-md px-2 py-1 text-xs font-medium bg-danger/15 text-danger hover:bg-danger/25 transition-colors"
+              aria-label="Stop automation"
+            >
+              Stop
+            </button>
+          )}
         </div>
 
         {/* User info + sign out */}

@@ -1,3 +1,4 @@
+import { AutomationControls } from "@/components/automation-controls"
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
@@ -26,6 +27,7 @@ function DashboardPage() {
   return (
     <AppShell title="Dashboard">
       <div className="flex flex-col gap-6">
+        <AutomationControls />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard
             label="Jobs Found Today"

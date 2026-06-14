@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { Menu, Play, Pause, X } from "lucide-react";
+import { Menu, Play, Pause, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SidebarContent } from "@/components/sidebar";
 import { useAutomation } from "@/context/automation-context";
-import { AuthGuard } from "@/components/auth/auth-guard";
+import { triggerScraper, triggerMatcher } from "@/lib/automation-api";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { AuthGuard } from "@/components/auth/auth-guard";
 
 export function AppShell({
   title,
@@ -15,17 +16,49 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { active, toggle } = useAutomation();
+  const [running, setRunning] = useState(false);
+  const { active, setActive } = useAutomation();
+
+  async function handleAutomationClick() {
+    if (active) {
+      // currently running — pause it
+      setActive(false);
+      toast("Automation paused", {
+        description: "Scraping and matching halted.",
+      });
+      return;
+    }
+
+    // not running — start full automation
+    setRunning(true);
+    setActive(true);
+    toast("Automation started", {
+      description: "Running scraper and matcher in background...",
+    });
+
+    try {
+      await triggerScraper();
+      await triggerMatcher();
+      toast.success("Automation complete!", {
+        description: "Jobs scraped and matched. Check the Jobs page.",
+      });
+    } catch {
+      toast.error("Automation failed", {
+        description: "Make sure the worker server is running.",
+      });
+      setActive(false);
+    } finally {
+      setRunning(false);
+    }
+  }
 
   return (
     <AuthGuard>
       <div className="flex min-h-screen bg-background">
-        {/* Desktop sidebar */}
         <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-border md:block">
           <SidebarContent />
         </aside>
 
-        {/* Mobile sidebar overlay */}
         {mobileOpen && (
           <div className="fixed inset-0 z-50 md:hidden">
             <div
@@ -48,7 +81,6 @@ export function AppShell({
           </div>
         )}
 
-        {/* Main content */}
         <div className="flex flex-1 flex-col md:pl-60">
           <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 backdrop-blur md:px-6">
             <div className="flex items-center gap-3">
@@ -65,14 +97,8 @@ export function AppShell({
             </div>
 
             <Button
-              onClick={() => {
-                toggle();
-                toast(active ? "Automation paused" : "Automation started", {
-                  description: active
-                    ? "Scraping and applying halted."
-                    : "Running across all enabled platforms.",
-                });
-              }}
+              onClick={handleAutomationClick}
+              disabled={running}
               className={cn(
                 "gap-2 font-medium text-white",
                 active
@@ -80,11 +106,17 @@ export function AppShell({
                   : "bg-muted hover:bg-muted/80 text-foreground",
               )}
             >
-              {active ? (
+              {running ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span className="hidden sm:inline">Running...</span>
+                  <span className="sm:hidden">Running</span>
+                </>
+              ) : active ? (
                 <>
                   <Pause className="size-4" />
-                  <span className="hidden sm:inline">Automation Running</span>
-                  <span className="sm:hidden">Running</span>
+                  <span className="hidden sm:inline">Pause Automation</span>
+                  <span className="sm:hidden">Pause</span>
                 </>
               ) : (
                 <>

@@ -1,3 +1,4 @@
+import { AnalyzeGapButton } from "@/components/automation-controls"
 import { useMemo, useState, useEffect, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -178,72 +179,77 @@ export function JobsTable() {
           <TableBody>
             {loading
               ? Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 8 }).map((__, j) => (
-                      <TableCell key={j}><Skeleton className="h-6 w-full" /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
+                <TableRow key={i}>
+                  {Array.from({ length: 8 }).map((__, j) => (
+                    <TableCell key={j}><Skeleton className="h-6 w-full" /></TableCell>
+                  ))}
+                </TableRow>
+              ))
               : filtered.map((job) => (
-                  <TableRow key={job.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <CompanyAvatar name={job.company} size="sm" />
-                        <span className="font-medium text-foreground">{job.company}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-foreground">{job.role}</TableCell>
-                    <TableCell><PlatformBadge platform={job.platform} /></TableCell>
-                    <TableCell><MatchBadge score={job.match} /></TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">{job.location}</TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">{job.dateFound}</TableCell>
-                    <TableCell><StatusBadge status={job.status} /></TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
-                        {/* View JD — native anchor */}
-                        {job.jobUrl ? (
-                          <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
-                            className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                            title="View JD">
-                            <ExternalLink className="size-4" />
-                          </a>
-                        ) : (
-                          <span className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground opacity-30 cursor-not-allowed">
-                            <ExternalLink className="size-4" />
-                          </span>
-                        )}
+                <TableRow key={job.id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <CompanyAvatar name={job.company} size="sm" />
+                      <span className="font-medium text-foreground">{job.company}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-foreground">{job.role}</TableCell>
+                  <TableCell><PlatformBadge platform={job.platform} /></TableCell>
+                  <TableCell><MatchBadge score={job.match} /></TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">{job.location}</TableCell>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">{job.dateFound}</TableCell>
+                  <TableCell><StatusBadge status={job.status} /></TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-1">
+                      {/* View JD — native anchor */}
+                      {job.jobUrl ? (
+                        <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
+                          className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                          title="View JD">
+                          <ExternalLink className="size-4" />
+                        </a>
+                      ) : (
+                        <span className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground opacity-30 cursor-not-allowed">
+                          <ExternalLink className="size-4" />
+                        </span>
+                      )}
 
-                        {/* Apply — native anchor + records application */}
-                        {job.jobUrl && job.status !== "Applied" ? (
-                          <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
-                            onClick={() => recordApplication(job)}
-                            className="inline-flex items-center justify-center rounded-md p-2 text-success hover:bg-accent transition-colors"
-                            title="Apply">
-                            <Check className="size-4" />
-                          </a>
-                        ) : (
-                          <span className={cn(
-                            "inline-flex items-center justify-center rounded-md p-2 transition-colors",
-                            job.status === "Applied"
-                              ? "text-success opacity-50 cursor-not-allowed"
-                              : "text-muted-foreground opacity-30 cursor-not-allowed"
-                          )}>
-                            <Check className="size-4" />
-                          </span>
-                        )}
+                      {/* Apply — native anchor + records application */}
+                      {job.jobUrl && job.status !== "Applied" ? (
+                        <a href={job.jobUrl} target="_blank" rel="noreferrer noopener"
+                          onClick={() => recordApplication(job)}
+                          className="inline-flex items-center justify-center rounded-md p-2 text-success hover:bg-accent transition-colors"
+                          title="Apply">
+                          <Check className="size-4" />
+                        </a>
+                      ) : (
+                        <span className={cn(
+                          "inline-flex items-center justify-center rounded-md p-2 transition-colors",
+                          job.status === "Applied"
+                            ? "text-success opacity-50 cursor-not-allowed"
+                            : "text-muted-foreground opacity-30 cursor-not-allowed"
+                        )}>
+                          <Check className="size-4" />
+                        </span>
+                      )}
 
-                        {/* Skip button */}
-                        <Button variant="ghost" size="icon"
-                          aria-label="Skip" title="Skip"
-                          disabled={actionId === job.id || job.status === "Skipped"}
-                          className="text-muted-foreground"
-                          onClick={() => handleSkip(job)}>
-                          <X className="size-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      {/* Skip button */}
+                      <Button variant="ghost" size="icon"
+                        aria-label="Skip" title="Skip"
+                        disabled={actionId === job.id || job.status === "Skipped"}
+                        className="text-muted-foreground"
+                        onClick={() => handleSkip(job)}>
+                        <X className="size-4" />
+                      </Button>
+                      <AnalyzeGapButton
+                        jobId={job.id}
+                        company={job.company}
+                        role={job.role}
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
           </TableBody>
         </Table>
         {!loading && filtered.length === 0 && (
