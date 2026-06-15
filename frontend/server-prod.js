@@ -3,10 +3,6 @@ import { createServer } from "node:http";
 const serverModule = await import("./dist/server/server.js");
 const fetchHandler = serverModule.r;
 
-if (!fetchHandler || typeof fetchHandler !== "function") {
-  throw new Error("Could not find fetch handler");
-}
-
 const PORT = process.env.PORT || 3000;
 
 createServer(async (req, res) => {
@@ -26,21 +22,18 @@ createServer(async (req, res) => {
 
     const response = await fetchHandler(request);
 
-    // safely convert headers
-    const headers = {};
-    if (response.headers && typeof response.headers.forEach === "function") {
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-    } else if (response.headers && typeof response.headers.entries === "function") {
-      for (const [key, value] of response.headers.entries()) {
-        headers[key] = value;
-      }
-    }
+    // debug — log what response actually is
+    console.log("[debug] response type:", typeof response);
+    console.log("[debug] response keys:", response ? Object.keys(response) : "null");
+    console.log("[debug] response constructor:", response?.constructor?.name);
+    console.log("[debug] is Response:", response instanceof Response);
+    console.log("[debug] has body:", "body" in (response || {}));
+    console.log("[debug] has text:", typeof response?.text);
+    console.log("[debug] has arrayBuffer:", typeof response?.arrayBuffer);
+    console.log("[debug] status:", response?.status);
 
-    res.writeHead(response.status || 200, headers);
-    const buffer = await response.arrayBuffer();
-    res.end(Buffer.from(buffer));
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("debug mode - check logs");
   } catch (e) {
     console.error("[server] Error:", e.message);
     res.writeHead(500, { "content-type": "text/plain" });
