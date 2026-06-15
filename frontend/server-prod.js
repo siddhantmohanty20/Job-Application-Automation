@@ -22,18 +22,28 @@ createServer(async (req, res) => {
 
     const response = await fetchHandler(request);
 
-    // debug — log what response actually is
-    console.log("[debug] response type:", typeof response);
-    console.log("[debug] response keys:", response ? Object.keys(response) : "null");
-    console.log("[debug] response constructor:", response?.constructor?.name);
-    console.log("[debug] is Response:", response instanceof Response);
-    console.log("[debug] has body:", "body" in (response || {}));
-    console.log("[debug] has text:", typeof response?.text);
-    console.log("[debug] has arrayBuffer:", typeof response?.arrayBuffer);
-    console.log("[debug] status:", response?.status);
+    // handler returns a plain HTML string
+    if (typeof response === "string") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(response);
+      return;
+    }
 
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("debug mode - check logs");
+    // handler returns a Response object
+    if (response && typeof response.text === "function") {
+      const headers = {};
+      if (response.headers?.forEach) {
+        response.headers.forEach((v, k) => { headers[k] = v; });
+      }
+      res.writeHead(response.status || 200, headers);
+      const text = await response.text();
+      res.end(text);
+      return;
+    }
+
+    // fallback
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(String(response));
   } catch (e) {
     console.error("[server] Error:", e.message);
     res.writeHead(500, { "content-type": "text/plain" });
