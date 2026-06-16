@@ -11,7 +11,7 @@ const clientDir = join(__dirname, "dist", "client");
 app.use(express.static(clientDir));
 
 // SPA fallback — all routes serve index.html
-app.get("*", (req, res) => {
+app.get("*path", (req, res) => {
   res.sendFile(join(clientDir, "index.html"));
 });
 
