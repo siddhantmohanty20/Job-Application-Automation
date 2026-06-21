@@ -1,13 +1,8 @@
 /**
  * scraper.js
- * Pulls jobs from free sources:
- *  - Greenhouse public API (per company)
- *  - Lever public API (per company)
- *  - Adzuna API (free tier)
- *  - Indeed RSS feed
- *
- * Run manually:  node src/scraper.js
- * Run via cron:  called by index.js scheduler
+ * Scrapes jobs PER USER, based on each user's own target roles,
+ * locations, and platform preferences from their Settings.
+ * Multi-user safe — no shared job pool.
  */
 
 import axios from "axios";
@@ -18,70 +13,95 @@ dotenv.config();
 
 const rssParser = new Parser();
 
-// ── CONFIG ────────────────────────────────────────────────────
-// Add the companies you want to track on Greenhouse/Lever
-const GREENHOUSE_COMPANIES = [
-  "stripe", "notion", "vercel", "linear", "figma",
-  "airbnb", "coinbase", "shopify", "atlassian", "mongodb",
-];
-
-const LEVER_COMPANIES = [
-  "netflix", "uber", "lyft", "pinterest", "reddit",
-  "dropbox", "twilio", "zendesk", "hubspot", "datadog",
-];
-
 const ADZUNA_APP_ID  = process.env.ADZUNA_APP_ID  ?? "";
 const ADZUNA_APP_KEY = process.env.ADZUNA_APP_KEY ?? "";
 
-// keywords to search for (from your profile target roles)
-const SEARCH_KEYWORDS = [
-  "software engineer",
-  "frontend engineer",
-  "full stack engineer",
-  "backend engineer",
-  "react developer",
+// curated company pools — same companies checked for everyone,
+// but only kept if they match the user's target roles
+const GREENHOUSE_COMPANIES = [
+  "stripe", "coinbase", "airbnb", "mongodb",
+  "figma", "rippling", "brex", "gusto",
+  "plaid", "checkr", "benchling", "verkada",
 ];
 
-// ── LOGGER ────────────────────────────────────────────────────
-async function log(message, type = "scrape") {
-  console.log(`[scraper] ${message}`);
-  await supabase.from("activity_log").insert({ type, message });
+const LEVER_COMPANIES = [
+  "netflix", "carta", "lattice", "retool",
+  "scale-ai", "replit", "anduril",
+];
+
+// ── get all users + their settings ────────────────────────────
+
+async function getActiveUsersWithSettings() {
+  const { data: profiles, error } = await supabase
+    .from("profile")
+    .select("user_id, title");
+  if (error) throw new Error(error.message);
+
+  const users = [];
+  for (const p of profiles ?? []) {
+    const { data: settings } = await supabase
+      .from("settings")
+      .select("target_roles, preferred_locations, platforms_to_scrape")
+      .eq("user_id", p.user_id)
+      .single();
+
+    users.push({
+      userId: p.user_id,
+      title: p.title,
+      targetRoles: settings?.target_roles?.length
+        ? settings.target_roles
+        : [p.title || "Software Engineer"],
+      preferredLocations: settings?.preferred_locations ?? ["India", "Remote"],
+      platforms: settings?.platforms_to_scrape ?? ["Greenhouse", "Lever", "Adzuna", "Indeed"],
+    });
+  }
+  return users;
 }
 
-// ── DEDUP + INSERT ────────────────────────────────────────────
-async function saveJobs(jobs) {
+// ── LOGGER (per user) ─────────────────────────────────────────
+
+async function log(userId, message, type = "scrape") {
+  console.log(`[scraper:${userId.slice(0, 8)}] ${message}`);
+  await supabase.from("activity_log").insert({ type, message, user_id: userId });
+}
+
+// ── SAVE JOBS (batched, scoped to user) ───────────────────────
+
+async function saveJobs(userId, jobs) {
   if (jobs.length === 0) return 0;
 
   const normalized = jobs.map((j) => ({
     ...j,
+    user_id: userId,
     external_id: j.external_id || `${j.platform}-${j.company}-${j.role}-${Date.now()}-${Math.random()}`,
   }));
 
   const BATCH_SIZE = 100;
   let saved = 0;
-
   for (let i = 0; i < normalized.length; i += BATCH_SIZE) {
     const batch = normalized.slice(i, i + BATCH_SIZE);
     const { error } = await supabase
       .from("jobs")
-      .upsert(batch, {
-        onConflict: "platform,external_id",
-        ignoreDuplicates: true,
-      });
-
-    if (error) {
-      console.error(`[scraper] Batch ${Math.floor(i/BATCH_SIZE) + 1} error:`, error.message);
-    } else {
-      saved += batch.length;
-      console.log(`[scraper] Saved batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(normalized.length/BATCH_SIZE)}`);
-    }
+      .upsert(batch, { onConflict: "user_id,platform,external_id", ignoreDuplicates: true });
+    if (!error) saved += batch.length;
+    else console.error("[scraper] batch error:", error.message);
   }
-
   return saved;
 }
 
-// ── GREENHOUSE ────────────────────────────────────────────────
-async function scrapeGreenhouse() {
+// ── relevance filter — does this job match the user's target roles? ──
+
+function matchesUserRoles(jobTitle, targetRoles) {
+  const titleLower = jobTitle.toLowerCase();
+  return targetRoles.some((role) => {
+    const roleWords = role.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    return roleWords.some((word) => titleLower.includes(word));
+  });
+}
+
+// ── GREENHOUSE (fetched once, filtered per user) ──────────────
+
+async function fetchGreenhousePool() {
   const jobs = [];
   for (const company of GREENHOUSE_COMPANIES) {
     try {
@@ -90,18 +110,14 @@ async function scrapeGreenhouse() {
         {
           timeout: 8000,
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json",
-          }
+          },
         }
       );
-
       for (const job of data.jobs ?? []) {
-        // skip jobs with no URL
         if (!job.absolute_url) continue;
-
         const companyName = company.charAt(0).toUpperCase() + company.slice(1);
-
         jobs.push({
           company: companyName,
           role: job.title,
@@ -124,15 +140,11 @@ async function scrapeGreenhouse() {
   return jobs;
 }
 
-// ── LEVER ─────────────────────────────────────────────────────
-async function scrapeLever() {
+async function fetchLeverPool() {
   const jobs = [];
   for (const company of LEVER_COMPANIES) {
     try {
-      const { data } = await axios.get(
-        `https://api.lever.co/v0/postings/${company}?mode=json`,
-        { timeout: 8000 }
-      );
+      const { data } = await axios.get(`https://api.lever.co/v0/postings/${company}?mode=json`, { timeout: 8000 });
       for (const job of data ?? []) {
         jobs.push({
           company: company.charAt(0).toUpperCase() + company.slice(1),
@@ -156,35 +168,30 @@ async function scrapeLever() {
   return jobs;
 }
 
-// ── ADZUNA ────────────────────────────────────────────────────
-async function scrapeAdzuna() {
-  if (!ADZUNA_APP_ID || !ADZUNA_APP_KEY) {
-    console.warn("[adzuna] No API keys — skipping");
-    return [];
-  }
+// ── ADZUNA (queried per-user with their own keywords) ─────────
+
+async function fetchAdzunaForUser(targetRoles, location) {
+  if (!ADZUNA_APP_ID || !ADZUNA_APP_KEY) return [];
   const jobs = [];
-  for (const keyword of SEARCH_KEYWORDS) {
+  for (const role of targetRoles.slice(0, 3)) {
     try {
-      const { data } = await axios.get(
-        `https://api.adzuna.com/v1/api/jobs/in/search/1`,
-        {
-          params: {
-            app_id: ADZUNA_APP_ID,
-            app_key: ADZUNA_APP_KEY,
-            what: keyword,
-            where: "india",
-            results_per_page: 20,
-            content_type: "application/json",
-          },
-          timeout: 8000,
-        }
-      );
+      const { data } = await axios.get(`https://api.adzuna.com/v1/api/jobs/in/search/1`, {
+        params: {
+          app_id: ADZUNA_APP_ID,
+          app_key: ADZUNA_APP_KEY,
+          what: role,
+          where: location || "india",
+          results_per_page: 15,
+          content_type: "application/json",
+        },
+        timeout: 8000,
+      });
       for (const job of data.results ?? []) {
         jobs.push({
           company: job.company?.display_name ?? "Unknown",
           role: job.title,
           platform: "Adzuna",
-          location: job.location?.display_name ?? "India",
+          location: job.location?.display_name ?? location ?? "India",
           job_url: job.redirect_url,
           apply_url: job.redirect_url,
           jd_text: job.description?.slice(0, 2000) ?? "",
@@ -196,25 +203,26 @@ async function scrapeAdzuna() {
         });
       }
     } catch (e) {
-      console.warn(`[adzuna] failed for "${keyword}": ${e.message}`);
+      console.warn(`[adzuna] failed for "${role}": ${e.message}`);
     }
   }
   return jobs;
 }
 
-// ── INDEED RSS ────────────────────────────────────────────────
-async function scrapeIndeedRSS() {
+// ── INDEED RSS (per-user with their own keywords) ─────────────
+
+async function fetchIndeedForUser(targetRoles, location) {
   const jobs = [];
-  for (const keyword of SEARCH_KEYWORDS.slice(0, 2)) {
+  for (const role of targetRoles.slice(0, 2)) {
     try {
-      const url = `https://www.indeed.com/rss?q=${encodeURIComponent(keyword)}&l=India`;
+      const url = `https://www.indeed.com/rss?q=${encodeURIComponent(role)}&l=${encodeURIComponent(location || "India")}`;
       const feed = await rssParser.parseURL(url);
       for (const item of feed.items ?? []) {
         jobs.push({
           company: item.creator ?? "Unknown",
           role: item.title ?? "",
           platform: "Indeed",
-          location: "India",
+          location: location || "India",
           job_url: item.link ?? "",
           apply_url: item.link ?? "",
           jd_text: item.contentSnippet?.slice(0, 2000) ?? "",
@@ -226,50 +234,71 @@ async function scrapeIndeedRSS() {
         });
       }
     } catch (e) {
-      console.warn(`[indeed-rss] failed for "${keyword}": ${e.message}`);
+      console.warn(`[indeed-rss] failed for "${role}": ${e.message}`);
     }
   }
   return jobs;
 }
 
-// ── MAIN ──────────────────────────────────────────────────────
+// ── MAIN: personalized scrape per user ─────────────────────────
+
 export async function runScraper() {
-  await log("Starting job scrape across all platforms...");
+  const users = await getActiveUsersWithSettings();
+  console.log(`[scraper] Running personalized scrape for ${users.length} user(s)...`);
 
-  const [ghJobs, levJobs, adzJobs, indeedJobs] = await Promise.all([
-    scrapeGreenhouse(),
-    scrapeLever(),
-    scrapeAdzuna(),
-    scrapeIndeedRSS(),
+  // fetch shared-source pools ONCE (Greenhouse/Lever don't support keyword search,
+  // so we filter their results per-user instead of re-fetching per-user)
+  const [ghPool, leverPool] = await Promise.all([
+    fetchGreenhousePool(),
+    fetchLeverPool(),
   ]);
+  const sharedPool = [...ghPool, ...leverPool];
+  console.log(`[scraper] Shared pool ready: ${sharedPool.length} jobs from Greenhouse + Lever`);
 
-  const all = [...ghJobs, ...levJobs, ...adzJobs, ...indeedJobs];
+  let totalSaved = 0;
 
-  // deduplicate by company+role
-  const seen = new Set();
-  const deduped = all.filter((job) => {
-    const key = `${job.company}-${job.role}`.toLowerCase().trim();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  for (const user of users) {
+    await log(user.userId, `Scraping for target roles: ${user.targetRoles.join(", ")}`);
 
-  // filter out jobs with no valid URL
-  const withUrls = deduped.filter((j) => j.job_url && j.job_url.length > 0);
+    // 1. filter shared pool by this user's target roles
+    const relevantFromPool = sharedPool.filter((j) =>
+      matchesUserRoles(j.role, user.targetRoles)
+    );
 
-  await log(
-    `Fetched ${all.length} raw — ${deduped.length} deduped — ${withUrls.length} with valid URLs — saving...`
-  );
+    // 2. fetch keyword-specific results for this user (Adzuna + Indeed support search)
+    const location = user.preferredLocations[0];
+    const [adzunaJobs, indeedJobs] = await Promise.all([
+      user.platforms.includes("Adzuna") ? fetchAdzunaForUser(user.targetRoles, location) : [],
+      user.platforms.includes("Indeed") ? fetchIndeedForUser(user.targetRoles, location) : [],
+    ]);
 
-  const saved = await saveJobs(withUrls);
-  await log(`Scrape complete — saved ${saved} new jobs to database`);
+    const userJobs = [...relevantFromPool, ...adzunaJobs, ...indeedJobs];
 
-  return saved;
+    // 3. dedup per user
+    const seen = new Set();
+    const deduped = userJobs.filter((j) => {
+      const key = `${j.company}-${j.role}`.toLowerCase().trim();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const withUrls = deduped.filter((j) => j.job_url);
+
+    const saved = await saveJobs(user.userId, withUrls);
+    await log(user.userId, `Found ${withUrls.length} matching jobs — saved ${saved} new`);
+    totalSaved += saved;
+
+    // small delay between users to be polite to rate limits
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  console.log(`[scraper] Done. ${totalSaved} total jobs saved across all users.`);
+  return totalSaved;
 }
 
-// allow direct execution
-if (process.argv[1].includes("scraper")) {
+if (process.argv[1]?.includes("scraper")) {
   runScraper()
-    .then((n) => { console.log(`Done. ${n} new jobs saved.`); process.exit(0); })
+    .then((n) => { console.log(`Done. ${n} jobs saved.`); process.exit(0); })
     .catch((e) => { console.error(e); process.exit(1); });
 }

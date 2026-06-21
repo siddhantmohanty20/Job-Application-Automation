@@ -1,10 +1,7 @@
 /**
- * tailor.js — Resume Gap Analyzer
- * Compares your resume/profile against a job description.
- * Returns missing keywords, skill gaps, and actionable suggestions.
- * Does NOT rewrite your resume — you make changes manually.
- *
- * Run manually: node src/tailor.js <jobId>
+ * tailor.js — Resume Gap Analyzer (multi-user safe)
+ * userId is passed in explicitly by the caller (server.js extracts it
+ * from the authenticated request).
  */
 
 import OpenAI from "openai";
@@ -14,11 +11,10 @@ dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
 
-// ── build candidate summary from profile ──────────────────────
-
-async function buildCandidateSummary() {
-  const { data: profile } = await supabase.from("profile").select("*").single();
-  if (!profile) throw new Error("No profile found");
+async function buildCandidateSummary(userId) {
+  const { data: profile } = await supabase
+    .from("profile").select("*").eq("user_id", userId).single();
+  if (!profile) throw new Error("No profile found for this user");
 
   const { data: experience } = await supabase
     .from("experience").select("*").eq("profile_id", profile.id).order("position");
@@ -46,16 +42,16 @@ PROJECTS:\n${projText || "None"}
 `.trim();
 }
 
-// ── analyze gap between resume and JD ────────────────────────
+export async function analyzeResumeGap(jobId, userId) {
+  if (!userId) throw new Error("userId is required for gap analysis");
 
-export async function analyzeResumeGap(jobId) {
   const { data: job, error } = await supabase
-    .from("jobs").select("*").eq("id", jobId).single();
-  if (error || !job) throw new Error(`Job ${jobId} not found`);
+    .from("jobs").select("*").eq("id", jobId).eq("user_id", userId).single();
+  if (error || !job) throw new Error(`Job ${jobId} not found for this user`);
 
-  console.log(`[analyzer] Analyzing gap for ${job.role} at ${job.company}...`);
+  console.log(`[analyzer:${userId.slice(0, 8)}] Analyzing gap for ${job.role} at ${job.company}...`);
 
-  const candidateSummary = await buildCandidateSummary();
+  const candidateSummary = await buildCandidateSummary(userId);
   const currentScore = job.match_score ?? 50;
 
   const prompt = `
@@ -70,19 +66,15 @@ Role: ${job.role}
 Location: ${job.location}
 Description: ${job.jd_text?.slice(0, 3000) ?? `Role: ${job.role} at ${job.company}`}
 
-Provide a detailed gap analysis. Respond ONLY with valid JSON, no markdown:
+Respond ONLY with valid JSON, no markdown:
 {
   "missingKeywords": ["keyword1", "keyword2"],
   "missingSkills": ["skill1", "skill2"],
   "presentKeywords": ["keyword1", "keyword2"],
-  "suggestions": [
-    "Add X to your experience description under Company Y",
-    "Highlight your Z project which demonstrates A",
-    "Mention B certification or coursework if applicable"
-  ],
-  "overallFit": "<2 sentence summary of how well the candidate fits>",
+  "suggestions": ["suggestion1", "suggestion2"],
+  "overallFit": "<2 sentence summary>",
   "estimatedScoreIfFixed": <integer 0-100>,
-  "priorityActions": ["Most important action", "Second most important action", "Third most important action"]
+  "priorityActions": ["action1", "action2", "action3"]
 }
 `;
 
@@ -96,15 +88,13 @@ Provide a detailed gap analysis. Respond ONLY with valid JSON, no markdown:
     const text = response.choices[0].message.content?.trim() ?? "";
     const clean = text.replace(/```json|```/g, "").trim();
     const parsed = JSON.parse(clean);
-
-    // build a human readable summary for changesSummary field
     const summary = `Missing: ${parsed.missingKeywords?.slice(0, 5).join(", ") ?? "none"}. ${parsed.overallFit}`;
 
-    // save to tailored_resumes table (reusing for gap analysis)
     const { data: saved } = await supabase
       .from("tailored_resumes")
       .insert({
         job_id: jobId,
+        user_id: userId,
         company: job.company,
         role: job.role,
         match_before: currentScore,
@@ -116,21 +106,20 @@ Provide a detailed gap analysis. Respond ONLY with valid JSON, no markdown:
       .select("id")
       .single();
 
-    // link to application
     if (saved?.id) {
       await supabase
         .from("applications")
         .update({ tailored_resume_id: saved.id })
-        .eq("job_id", jobId);
+        .eq("job_id", jobId)
+        .eq("user_id", userId);
     }
 
     await supabase.from("activity_log").insert({
       type: "resume",
-      message: `Gap analysis complete for ${job.role} at ${job.company} — ${parsed.missingKeywords?.length ?? 0} missing keywords found`,
+      message: `Gap analysis complete for ${job.role} at ${job.company}`,
+      user_id: userId,
     });
 
-    console.log(`[analyzer] Done. Missing keywords: ${parsed.missingKeywords?.length ?? 0}`);
-    console.log(`[analyzer] Priority: ${parsed.priorityActions?.[0] ?? "N/A"}`);
     return { saved, analysis: parsed };
   } catch (e) {
     console.error("[analyzer] Failed:", e.message);
@@ -138,17 +127,16 @@ Provide a detailed gap analysis. Respond ONLY with valid JSON, no markdown:
   }
 }
 
-// allow direct execution: node src/tailor.js <jobId>
-const jobId = process.argv[2];
-if (jobId) {
-  analyzeResumeGap(jobId)
+// direct execution requires both jobId and userId
+const [jobId, userId] = process.argv.slice(2);
+if (jobId && userId) {
+  analyzeResumeGap(jobId, userId)
     .then(({ analysis }) => {
-      console.log("\n=== GAP ANALYSIS RESULT ===");
       console.log("Missing Keywords:", analysis.missingKeywords?.join(", "));
-      console.log("Missing Skills:", analysis.missingSkills?.join(", "));
-      console.log("Priority Actions:");
-      analysis.priorityActions?.forEach((a, i) => console.log(`  ${i + 1}. ${a}`));
       process.exit(0);
     })
     .catch((e) => { console.error(e); process.exit(1); });
+} else if (jobId) {
+  console.error("Usage: node src/tailor.js <jobId> <userId>");
+  process.exit(1);
 }

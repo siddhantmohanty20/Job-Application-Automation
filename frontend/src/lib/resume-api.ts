@@ -1,6 +1,7 @@
 /**
  * resume-api.ts
- * Supabase read/write for resume vault + tailored resumes.
+ * Supabase read/write for resume vault + gap analyses.
+ * All queries scoped to the current authenticated user.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -17,11 +18,11 @@ export type TailoredResume = {
   content: string;
 };
 
-export type ResumeAnalysis = {
-  skills: string[];
-  keywords: string[];
-  yearsExperience: number;
-};
+async function getUserId(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error("Not authenticated");
+  return data.user.id;
+}
 
 // ── upload master resume to Supabase Storage ──────────────────
 
@@ -40,19 +41,21 @@ export async function uploadMasterResume(
   return { path, error: null };
 }
 
-// ── fetch tailored resumes ────────────────────────────────────
+// ── fetch gap analyses (scoped to user) ───────────────────────
 
 export async function fetchTailoredResumes(): Promise<TailoredResume[]> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("tailored_resumes")
     .select("*")
+    .eq("user_id", userId)
     .order("date_generated", { ascending: false });
 
   if (error) throw new Error(error.message);
   return (data ?? []).map(dbToTailored);
 }
 
-// ── save tailored resume ──────────────────────────────────────
+// ── save gap analysis / tailored resume ───────────────────────
 
 export async function saveTailoredResume(params: {
   jobId: string;
@@ -63,10 +66,12 @@ export async function saveTailoredResume(params: {
   changesSummary: string;
   content: string;
 }): Promise<TailoredResume> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("tailored_resumes")
     .insert({
       job_id: params.jobId,
+      user_id: userId,
       company: params.company,
       role: params.role,
       match_before: params.matchBefore,

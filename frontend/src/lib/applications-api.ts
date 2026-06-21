@@ -1,17 +1,26 @@
 /**
  * applications-api.ts
  * All Supabase read/write operations for applications.
+ * All queries scoped to the current authenticated user.
  */
 
 import { supabase } from "@/lib/supabase";
 import type { Application, ApplicationStatus } from "@/lib/data";
 
+async function getUserId(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error("Not authenticated");
+  return data.user.id;
+}
+
 // ── fetch all applications ────────────────────────────────────
 
 export async function fetchApplications(): Promise<Application[]> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("applications")
     .select("*")
+    .eq("user_id", userId)
     .order("date_applied", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -28,10 +37,13 @@ export async function createApplication(params: {
   recruiterEmail?: string;
   recruiterName?: string;
 }): Promise<Application> {
+  const userId = await getUserId();
+
   const { data, error } = await supabase
     .from("applications")
     .insert({
       job_id: params.jobId,
+      user_id: userId,
       company: params.company,
       role: params.role,
       method: params.method,
@@ -45,16 +57,16 @@ export async function createApplication(params: {
 
   if (error) throw new Error(error.message);
 
-  // also update job status to Applied
   await supabase
     .from("jobs")
     .update({ status: "Applied" })
-    .eq("id", params.jobId);
+    .eq("id", params.jobId)
+    .eq("user_id", userId);
 
-  // log the activity
   await supabase.from("activity_log").insert({
     type: "apply",
     message: `Applied to ${params.role} at ${params.company}`,
+    user_id: userId,
   });
 
   return dbToApplication(data);
@@ -66,16 +78,19 @@ export async function updateApplicationStatus(
   id: string,
   status: ApplicationStatus
 ): Promise<void> {
+  const userId = await getUserId();
   const { error } = await supabase
     .from("applications")
     .update({ status })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("user_id", userId);
 
   if (error) throw new Error(error.message);
 
   await supabase.from("activity_log").insert({
     type: "apply",
     message: `Application status updated to ${status}`,
+    user_id: userId,
   });
 }
 

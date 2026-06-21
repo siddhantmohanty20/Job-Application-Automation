@@ -98,7 +98,7 @@ export function AuthPage() {
             {[
               { stat: "20–40", label: "Applications per day" },
               { stat: "100%", label: "Free tier infrastructure" },
-              { stat: "AI", label: "Powered resume tailoring" },
+              { stat: "AI", label: "Powered resume analysis" },
             ].map((item) => (
               <div
                 key={item.label}

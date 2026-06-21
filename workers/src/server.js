@@ -1,7 +1,7 @@
 /**
  * server.js
- * Minimal Express API server for triggering automation from the frontend.
- * Runs alongside the cron scheduler on Render.
+ * Multi-user safe API server. The authenticated user's id comes from
+ * the frontend (via the request), not a hardcoded env var.
  */
 
 import express from "express";
@@ -16,46 +16,48 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ── middleware ────────────────────────────────────────────────
 app.use(cors({
   origin: process.env.FRONTEND_URL || "http://localhost:8080",
   methods: ["GET", "POST"],
 }));
 app.use(express.json());
 
-// ── simple API key auth ───────────────────────────────────────
-function auth(req, res, next) {
+// ── auth: verify worker API key + extract user from Supabase JWT ──
+async function auth(req, res, next) {
   const key = req.headers["x-api-key"];
   if (key !== process.env.WORKER_API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
+
+  // get the calling user's id from their Supabase access token
+  const authHeader = req.headers["authorization"];
+  if (authHeader) {
+    const token = authHeader.replace("Bearer ", "");
+    const { data, error } = await supabase.auth.getUser(token);
+    if (!error && data.user) {
+      req.userId = data.user.id;
+    }
+  }
   next();
 }
 
-// ── health check ──────────────────────────────────────────────
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// ── trigger scraper ───────────────────────────────────────────
+// scraper/matcher run for ALL active users (shared job pool, distributed per-user)
 app.post("/api/scraper/run", auth, async (req, res) => {
   console.log("[api] Scraper triggered from UI");
-  // respond immediately, run in background
   res.json({ message: "Scraper started", status: "running" });
   try {
     const saved = await runScraper();
     const matched = await runMatcher();
     console.log(`[api] Scraper done — ${saved} jobs, ${matched} matched`);
-    await supabase.from("activity_log").insert({
-      type: "scrape",
-      message: `Manual scrape complete — ${saved} new jobs, ${matched} matched`,
-    });
   } catch (e) {
     console.error("[api] Scraper error:", e.message);
   }
 });
 
-// ── trigger matcher ───────────────────────────────────────────
 app.post("/api/matcher/run", auth, async (req, res) => {
   console.log("[api] Matcher triggered from UI");
   res.json({ message: "Matcher started", status: "running" });
@@ -67,26 +69,26 @@ app.post("/api/matcher/run", auth, async (req, res) => {
   }
 });
 
-// ── trigger gap analysis ──────────────────────────────────────
+// gap analysis — scoped to the calling user
 app.post("/api/analyze/:jobId", auth, async (req, res) => {
   const { jobId } = req.params;
   console.log(`[api] Gap analysis triggered for job ${jobId}`);
   res.json({ message: "Analysis started", status: "running", jobId });
   try {
-    await analyzeResumeGap(jobId);
+    await analyzeResumeGap(jobId, req.userId);
     console.log(`[api] Gap analysis done for ${jobId}`);
   } catch (e) {
     console.error("[api] Gap analysis error:", e.message);
   }
 });
 
-// ── trigger full automation ───────────────────────────────────
 app.post("/api/automation/start", auth, async (req, res) => {
   console.log("[api] Full automation triggered from UI");
   res.json({ message: "Automation started", status: "running" });
   try {
-    await supabase.from("settings").update({ automation_active: true })
-      .eq("user_id", process.env.SUPABASE_USER_ID || "");
+    if (req.userId) {
+      await supabase.from("settings").update({ automation_active: true }).eq("user_id", req.userId);
+    }
     const saved = await runScraper();
     const matched = await runMatcher();
     console.log(`[api] Automation done — ${saved} jobs scraped, ${matched} matched`);
@@ -95,9 +97,20 @@ app.post("/api/automation/start", auth, async (req, res) => {
   }
 });
 
-// ── automation status ─────────────────────────────────────────
+app.post("/api/automation/stop", auth, async (req, res) => {
+  try {
+    if (req.userId) {
+      await supabase.from("settings").update({ automation_active: false }).eq("user_id", req.userId);
+    }
+    res.json({ message: "Stop signal sent" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/automation/status", auth, async (req, res) => {
-  const { data } = await supabase.from("settings").select("automation_active").single();
+  if (!req.userId) return res.json({ active: false });
+  const { data } = await supabase.from("settings").select("automation_active").eq("user_id", req.userId).single();
   res.json({ active: data?.automation_active ?? false });
 });
 

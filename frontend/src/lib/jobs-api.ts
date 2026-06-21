@@ -1,12 +1,11 @@
 /**
  * jobs-api.ts
  * All Supabase read/write operations for the jobs section.
+ * All queries scoped to the current authenticated user.
  */
 
 import { supabase } from "@/lib/supabase";
 import type { Job, JobStatus, Platform } from "@/lib/data";
-
-// ── types ────────────────────────────────────────────────────
 
 export type JobFilters = {
   search?: string;
@@ -35,15 +34,25 @@ export type ActivityEntry = {
   time: string;
 };
 
+// ── helper: get current user id ───────────────────────────────
+async function getUserId(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) throw new Error("Not authenticated");
+  return data.user.id;
+}
+
 // ── jobs ─────────────────────────────────────────────────────
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<Job[]> {
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  const cutoff = sevenDaysAgo.toISOString().slice(0, 10)
+  const userId = await getUserId();
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+
   let query = supabase
     .from("jobs")
     .select("*")
+    .eq("user_id", userId)
     .gte("date_found", cutoff)
     .order("date_found", { ascending: false })
     .order("match_score", { ascending: false });
@@ -69,24 +78,29 @@ export async function updateJobStatus(
   jobId: string,
   status: JobStatus
 ): Promise<void> {
+  const userId = await getUserId();
   const { error } = await supabase
     .from("jobs")
     .update({ status })
-    .eq("id", jobId);
+    .eq("id", jobId)
+    .eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
 
 export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  const cutoff = sevenDaysAgo.toISOString().slice(0, 10)
+  const userId = await getUserId();
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
+
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
-    .gte("match_score", 60)
-    .eq("status", "New")// ← only show New jobs, exclude Applied/Skipped
-    .gte("date_found", cutoff)        
-    .order("match_score", { ascending: false })
+    .eq("user_id", userId)
+    .eq("status", "New")
+    .gte("date_found", cutoff)
+    .order("match_score", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) throw new Error(error.message);
@@ -96,6 +110,7 @@ export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
 // ── dashboard metrics ─────────────────────────────────────────
 
 export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
+  const userId = await getUserId();
   const today = new Date().toISOString().slice(0, 10);
 
   const [jobsTodayRes, appsTodayRes, allJobsRes, emailsRes, appsAllRes] =
@@ -103,62 +118,35 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
       supabase
         .from("jobs")
         .select("id", { count: "exact" })
+        .eq("user_id", userId)
         .gte("created_at", today),
       supabase
         .from("applications")
         .select("id", { count: "exact" })
+        .eq("user_id", userId)
         .gte("date_applied", today),
-      supabase.from("jobs").select("match_score, status"),
+      supabase.from("jobs").select("match_score, status").eq("user_id", userId),
       supabase
         .from("emails")
         .select("id", { count: "exact" })
+        .eq("user_id", userId)
         .eq("status", "Pending"),
-      supabase.from("applications").select("status"),
+      supabase.from("applications").select("status").eq("user_id", userId),
     ]);
 
   const jobs = allJobsRes.data ?? [];
   const totalJobs = jobs.length;
-  const highMatchJobs = jobs.filter(
-    (j) => (j.match_score ?? 0) >= 75
-  ).length;
-  const matchRate =
-    totalJobs > 0 ? Math.round((highMatchJobs / totalJobs) * 100) : 0;
+  const highMatchJobs = jobs.filter((j) => (j.match_score ?? 0) >= 75).length;
+  const matchRate = totalJobs > 0 ? Math.round((highMatchJobs / totalJobs) * 100) : 0;
 
   const apps = appsAllRes.data ?? [];
   const totalApps = apps.length || 1;
   const pipeline = [
-    {
-      stage: "Scraped",
-      count: jobsTodayRes.count ?? 0,
-      total: Math.max(jobsTodayRes.count ?? 0, 1),
-      tone: "info" as const,
-    },
-    {
-      stage: "Matched (>75%)",
-      count: highMatchJobs,
-      total: Math.max(totalJobs, 1),
-      tone: "info" as const,
-    },
-    {
-      stage: "Applied",
-      count: apps.filter((a) => a.status === "Applied").length,
-      total: totalApps,
-      tone: "success" as const,
-    },
-    {
-      stage: "Email Sent",
-      count: apps.filter((a) =>
-        ["Applied", "Interview", "No Response"].includes(a.status)
-      ).length,
-      total: totalApps,
-      tone: "warning" as const,
-    },
-    {
-      stage: "Response Received",
-      count: apps.filter((a) => a.status === "Interview").length,
-      total: totalApps,
-      tone: "danger" as const,
-    },
+    { stage: "Scraped", count: jobsTodayRes.count ?? 0, total: Math.max(jobsTodayRes.count ?? 0, 1), tone: "info" as const },
+    { stage: "Matched (>75%)", count: highMatchJobs, total: Math.max(totalJobs, 1), tone: "info" as const },
+    { stage: "Applied", count: apps.filter((a) => a.status === "Applied").length, total: totalApps, tone: "success" as const },
+    { stage: "Email Sent", count: apps.filter((a) => ["Applied", "Interview", "No Response"].includes(a.status)).length, total: totalApps, tone: "warning" as const },
+    { stage: "Response Received", count: apps.filter((a) => a.status === "Interview").length, total: totalApps, tone: "danger" as const },
   ];
 
   return {
@@ -173,9 +161,11 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
 // ── activity log ──────────────────────────────────────────────
 
 export async function fetchActivityLog(limit = 20): Promise<ActivityEntry[]> {
+  const userId = await getUserId();
   const { data, error } = await supabase
     .from("activity_log")
     .select("*")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);
@@ -192,7 +182,8 @@ export async function logActivity(
   message: string,
   metadata: Record<string, unknown> = {}
 ): Promise<void> {
-  await supabase.from("activity_log").insert({ type, message, metadata });
+  const userId = await getUserId();
+  await supabase.from("activity_log").insert({ type, message, metadata, user_id: userId });
 }
 
 // ── mappers ───────────────────────────────────────────────────
