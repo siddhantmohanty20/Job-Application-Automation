@@ -5,7 +5,6 @@
 ### Automate your entire job search — scrape, match, apply, and track. All on autopilot.
 
 [![Live Demo](https://img.shields.io/badge/demo-live-22c55e?style=for-the-badge)](https://job-application-automation-u4ci.onrender.com)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](#-license)
 [![Built with React](https://img.shields.io/badge/frontend-React%2019-61dafb?style=for-the-badge&logo=react&logoColor=white)](#-tech-stack)
 [![Powered by Supabase](https://img.shields.io/badge/database-Supabase-3ecf8e?style=for-the-badge&logo=supabase&logoColor=white)](#-tech-stack)
 
