@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend — install & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --include=dev
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_WORKER_URL: ${{ secrets.VITE_WORKER_URL }}
+          VITE_WORKER_API_KEY: ${{ secrets.VITE_WORKER_API_KEY }}
+
+  workers:
+    name: Workers — install & syntax check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Syntax check all source files
+        run: |
+          for file in src/*.js; do
+            echo "Checking $file"
+            node --check "$file"
+          done
