@@ -18,7 +18,7 @@
 
 ## 📋 Overview
 
-**AutoApply** is a personal job-search automation platform built for one purpose: stop wasting hours manually searching job boards, copy-pasting resumes, and tracking applications in spreadsheets.
+**AutoApply** is a personal job-search automation platform built for one purpose to stop wasting hours manually searching job boards, copy-pasting resumes, and tracking applications in spreadsheets.
 
 It scrapes jobs from real company career pages, scores every listing against your actual profile using AI, surfaces a keyword gap analysis so you know exactly what to improve before applying, and keeps a live dashboard of your entire pipeline — from "found" to "interview."
 
