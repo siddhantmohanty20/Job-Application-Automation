@@ -36,6 +36,8 @@ export type Application = {
   method: "Easy Apply" | "Playwright" | "Email"
   status: ApplicationStatus
   recruiterEmail: string | null
+  recruiterName?: string 
+  jobId?: string
 }
 
 // deterministic color from company name
