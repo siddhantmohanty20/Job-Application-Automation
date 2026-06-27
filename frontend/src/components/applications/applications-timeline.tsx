@@ -1,3 +1,5 @@
+import { findRecruiter } from "@/lib/automation-api"
+import { UserSearch } from "lucide-react"
 import { useEffect, useState, useCallback } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -44,6 +46,7 @@ export function ApplicationsTimeline() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<(typeof filters)[number]>("All")
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [findingId, setFindingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -82,6 +85,33 @@ export function ApplicationsTimeline() {
       })
     } finally {
       setUpdatingId(null)
+    }
+  }
+
+  async function handleFindRecruiter(app: Application) {
+    if (!app.jobId) {
+      toast.error("Cannot search — missing job reference")
+      return
+    }
+    setFindingId(app.id)
+    try {
+      const result = await findRecruiter(app.jobId)
+      if (result.found) {
+        toast.success(`Found recruiter: ${result.name}`, {
+          description: result.email,
+        })
+        await load()
+      } else {
+        toast.info("No recruiter found", {
+          description: "Could not find a verified contact for this company.",
+        })
+      }
+    } catch (e) {
+      toast.error("Recruiter search failed", {
+        description: e instanceof Error ? e.message : "Unknown error",
+      })
+    } finally {
+      setFindingId(null)
     }
   }
 
@@ -167,7 +197,7 @@ export function ApplicationsTimeline() {
                         {app.recruiterEmail && (
                           <span className="flex items-center gap-1">
                             <Mail className="size-3.5" />
-                            {app.recruiterEmail}
+                            {app.recruiterName ? `${app.recruiterName} · ${app.recruiterEmail}` : app.recruiterEmail}
                           </span>
                         )}
                       </div>
@@ -219,16 +249,35 @@ export function ApplicationsTimeline() {
                   >
                     <FileText className="size-3.5" /> View Tailored Resume
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() =>
-                      toast.info("Email outreach coming in Part E")
-                    }
-                  >
-                    <Mail className="size-3.5" /> View Cold Email
-                  </Button>
+
+                  {!app.recruiterEmail ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={findingId === app.id}
+                      onClick={() => handleFindRecruiter(app)}
+                    >
+                      {findingId === app.id ? (
+                        <>Searching...</>
+                      ) : (
+                        <>
+                          <UserSearch className="size-3.5" /> Find Recruiter
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() =>
+                        toast.info("Email outreach coming in Part E")
+                      }
+                    >
+                      <Mail className="size-3.5" /> View Cold Email
+                    </Button>
+                  )}
                 </div>
               </Card>
             </div>

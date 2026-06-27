@@ -3,7 +3,7 @@
  * Multi-user safe API server. The authenticated user's id comes from
  * the frontend (via the request), not a hardcoded env var.
  */
-
+import { findRecruiterForJob } from "./recruiter.js";
 import express from "express";
 import cors from "cors";
 import { runScraper } from "./scraper.js";
@@ -107,6 +107,21 @@ app.post("/api/automation/stop", auth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+ app.post("/api/recruiter/find/:jobId", auth, async (req, res) => {
+    const { jobId } = req.params;
+    if (!req.userId) {
+      return res.status(401).json({ error: "User not identified" });
+    }
+    console.log(`[api] Recruiter find triggered for job ${jobId}`);
+    try {
+      const result = await findRecruiterForJob(jobId, req.userId);
+      res.json(result);
+    } catch (e) {
+      console.error("[api] Recruiter find error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
 
 app.get("/api/automation/status", auth, async (req, res) => {
   if (!req.userId) return res.json({ active: false });

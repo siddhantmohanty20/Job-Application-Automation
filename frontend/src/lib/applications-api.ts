@@ -105,5 +105,7 @@ function dbToApplication(row: Record<string, unknown>): Application {
     method: ((row.method as string) ?? "Easy Apply") as "Easy Apply" | "Playwright" | "Email",
     status: (row.status as ApplicationStatus) ?? "Applied",
     recruiterEmail: (row.recruiter_email as string) ?? "",
+    recruiterName: (row.recruiter_name as string) ?? "",
+    jobId: (row.job_id as string) ?? "",
   };
 }
