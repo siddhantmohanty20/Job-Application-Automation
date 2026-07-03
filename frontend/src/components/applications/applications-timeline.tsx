@@ -5,6 +5,8 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { draftEmail } from "@/lib/automation-api"
+import { Sparkles } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -47,6 +49,8 @@ export function ApplicationsTimeline() {
   const [filter, setFilter] = useState<(typeof filters)[number]>("All")
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [findingId, setFindingId] = useState<string | null>(null)
+  const [draftingId, setDraftingId] = useState<string | null>(null)
+  const [hasEmailDraft, setHasEmailDraft] = useState<Record<string, boolean>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -112,6 +116,33 @@ export function ApplicationsTimeline() {
       })
     } finally {
       setFindingId(null)
+    }
+  }
+
+  async function handleDraftEmail(app: Application) {
+    if (!app.jobId) {
+      toast.error("Cannot draft — missing job reference")
+      return
+    }
+    setDraftingId(app.id)
+    try {
+      const result = await draftEmail(app.jobId)
+      if (result.skipped) {
+        toast.info("Email already drafted", {
+          description: "Check the Email Outreach page to view it.",
+        })
+      } else {
+        toast.success("Email drafted!", {
+          description: result.email?.subject ?? "Check Email Outreach to review.",
+        })
+      }
+      setHasEmailDraft((prev) => ({ ...prev, [app.id]: true }))
+    } catch (e) {
+      toast.error("Failed to draft email", {
+        description: e instanceof Error ? e.message : "Unknown error",
+      })
+    } finally {
+      setDraftingId(null)
     }
   }
 
@@ -271,11 +302,14 @@ export function ApplicationsTimeline() {
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      onClick={() =>
-                        toast.info("Email outreach coming in Part E")
-                      }
+                      disabled={draftingId === app.id}
+                      onClick={() => handleDraftEmail(app)}
                     >
-                      <Mail className="size-3.5" /> View Cold Email
+                      {draftingId === app.id ? (
+                        <>Drafting...</>
+                      ) : (
+                        <><Sparkles className="size-3.5" /> Draft Cold Email</>
+                      )}
                     </Button>
                   )}
                 </div>

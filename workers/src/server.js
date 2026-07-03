@@ -11,6 +11,7 @@ import { runMatcher } from "./matcher.js";
 import { analyzeResumeGap } from "./tailor.js";
 import { supabase } from "./supabase.js";
 import dotenv from "dotenv";
+import { draftEmailForJob } from "./email-draft.js"
 dotenv.config();
 
 const app = express();
@@ -119,6 +120,21 @@ app.post("/api/automation/stop", auth, async (req, res) => {
       res.json(result);
     } catch (e) {
       console.error("[api] Recruiter find error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/email/draft/:jobId", auth, async (req, res) => {
+    const { jobId } = req.params;
+    if (!req.userId) {
+      return res.status(401).json({ error: "User not identified" });
+    }
+    console.log(`[api] Email draft triggered for job ${jobId}`);
+    try {
+      const result = await draftEmailForJob(jobId, req.userId);
+      res.json(result);
+    } catch (e) {
+      console.error("[api] Email draft error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
