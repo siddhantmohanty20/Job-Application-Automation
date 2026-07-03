@@ -65,6 +65,28 @@ export async function findRecruiter(jobId: string): Promise<{
   return res.json();
 }
 
+export async function draftEmail(jobId: string): Promise<{
+    skipped: boolean;
+    reason?: string;
+    email?: {
+      id: string;
+      subject: string;
+      body: string;
+      recruiter_name: string;
+      recruiter_email: string;
+      scheduled_for: string;
+      status: string;
+    };
+  }> {
+    const headers = await getHeaders();
+    const res = await fetch(`${WORKER_URL}/api/email/draft/${jobId}`, {
+      method: "POST",
+      headers,
+    });
+    if (!res.ok) throw new Error("Failed to draft email");
+    return res.json();
+  }
+
 export async function triggerFullAutomation(): Promise<{ message: string }> {
   const headers = await getHeaders();
   const res = await fetch(`${WORKER_URL}/api/automation/start`, {
