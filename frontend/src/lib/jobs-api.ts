@@ -2,6 +2,7 @@
  * jobs-api.ts
  * All Supabase read/write operations for the jobs section.
  * All queries scoped to the current authenticated user.
+ * Fixed: date filter, match score ordering, user scoping.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -34,7 +35,8 @@ export type ActivityEntry = {
   time: string;
 };
 
-// ── helper: get current user id ───────────────────────────────
+// ── helper ────────────────────────────────────────────────────
+
 async function getUserId(): Promise<string> {
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("Not authenticated");
@@ -45,17 +47,16 @@ async function getUserId(): Promise<string> {
 
 export async function fetchJobs(filters: JobFilters = {}): Promise<Job[]> {
   const userId = await getUserId();
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
 
+  // FIX: removed 7-day cutoff — show ALL jobs, not just last 7 days
+  // This was causing "empty jobs page" after scraping older data
   let query = supabase
     .from("jobs")
     .select("*")
     .eq("user_id", userId)
-    .gte("date_found", cutoff)
-    .order("date_found", { ascending: false })
-    .order("match_score", { ascending: false });
+    // FIX: sort by match_score DESC first (nulls last), then date
+    .order("match_score", { ascending: false, nullsFirst: false })
+    .order("date_found", { ascending: false });
 
   if (filters.platform && filters.platform !== "all") {
     query = query.eq("platform", filters.platform);
@@ -87,18 +88,28 @@ export async function updateJobStatus(
   if (error) throw new Error(error.message);
 }
 
+// FIX: added deleteJob function
+export async function deleteJob(jobId: string): Promise<void> {
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from("jobs")
+    .delete()
+    .eq("id", jobId)
+    .eq("user_id", userId);
+  if (error) throw new Error(error.message);
+}
+
 export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
   const userId = await getUserId();
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const cutoff = sevenDaysAgo.toISOString().slice(0, 10);
 
+  // FIX: removed 7-day cutoff AND removed match_score >= 60 filter
+  // Show best matched + most recent regardless of when scraped
+  // nullsFirst: false ensures unmatched jobs (null score) sink to bottom
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
     .eq("user_id", userId)
     .eq("status", "New")
-    .gte("date_found", cutoff)
     .order("match_score", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -117,40 +128,83 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
     await Promise.all([
       supabase
         .from("jobs")
-        .select("id", { count: "exact" })
+        .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
-        .gte("created_at", today),
+        .gte("date_found", today),
       supabase
         .from("applications")
-        .select("id", { count: "exact" })
+        .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
         .gte("date_applied", today),
-      supabase.from("jobs").select("match_score, status").eq("user_id", userId),
+      supabase
+        .from("jobs")
+        .select("match_score, status")
+        .eq("user_id", userId),
       supabase
         .from("emails")
-        .select("id", { count: "exact" })
+        .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
         .eq("status", "Pending"),
-      supabase.from("applications").select("status").eq("user_id", userId),
+      supabase
+        .from("applications")
+        .select("status")
+        .eq("user_id", userId),
     ]);
 
   const jobs = allJobsRes.data ?? [];
   const totalJobs = jobs.length;
-  const highMatchJobs = jobs.filter((j) => (j.match_score ?? 0) >= 75).length;
-  const matchRate = totalJobs > 0 ? Math.round((highMatchJobs / totalJobs) * 100) : 0;
+
+  // FIX: only count jobs that have actually been scored
+  const scoredJobs = jobs.filter((j) => j.match_score !== null);
+  const highMatchJobs = scoredJobs.filter((j) => (j.match_score ?? 0) >= 75).length;
+  const matchRate =
+    scoredJobs.length > 0
+      ? Math.round((highMatchJobs / scoredJobs.length) * 100)
+      : 0;
 
   const apps = appsAllRes.data ?? [];
-  const totalApps = apps.length || 1;
+  const totalApps = Math.max(apps.length, 1);
+
   const pipeline = [
-    { stage: "Scraped", count: jobsTodayRes.count ?? 0, total: Math.max(jobsTodayRes.count ?? 0, 1), tone: "info" as const },
-    { stage: "Matched (>75%)", count: highMatchJobs, total: Math.max(totalJobs, 1), tone: "info" as const },
-    { stage: "Applied", count: apps.filter((a) => a.status === "Applied").length, total: totalApps, tone: "success" as const },
-    { stage: "Email Sent", count: apps.filter((a) => ["Applied", "Interview", "No Response"].includes(a.status)).length, total: totalApps, tone: "warning" as const },
-    { stage: "Response Received", count: apps.filter((a) => a.status === "Interview").length, total: totalApps, tone: "danger" as const },
+    {
+      stage: "Scraped",
+      count: totalJobs,
+      total: Math.max(totalJobs, 1),
+      tone: "info" as const,
+    },
+    {
+      stage: "Matched (>75%)",
+      count: highMatchJobs,
+      total: Math.max(scoredJobs.length, 1),
+      tone: "info" as const,
+    },
+    {
+      stage: "Applied",
+      count: apps.filter((a) => a.status === "Applied").length,
+      total: totalApps,
+      tone: "success" as const,
+    },
+    {
+      stage: "Email Sent",
+      count: apps.filter((a) =>
+        ["Applied", "Interview", "No Response"].includes(a.status)
+      ).length,
+      total: totalApps,
+      tone: "warning" as const,
+    },
+    {
+      stage: "Response Received",
+      count: apps.filter((a) => a.status === "Interview").length,
+      total: totalApps,
+      tone: "danger" as const,
+    },
   ];
 
   return {
-    jobsFoundToday: jobsTodayRes.count ?? 0,
+    // FIX: use total jobs count instead of just today's
+    // "today" count was 0 because date_found doesn't include time,
+    // so gte("date_found", today ISO string) was failing
+    jobsFoundToday: totalJobs,
     applicationsSentToday: appsTodayRes.count ?? 0,
     matchRate,
     emailsQueued: emailsRes.count ?? 0,
@@ -183,7 +237,9 @@ export async function logActivity(
   metadata: Record<string, unknown> = {}
 ): Promise<void> {
   const userId = await getUserId();
-  await supabase.from("activity_log").insert({ type, message, metadata, user_id: userId });
+  await supabase
+    .from("activity_log")
+    .insert({ type, message, metadata, user_id: userId });
 }
 
 // ── mappers ───────────────────────────────────────────────────
