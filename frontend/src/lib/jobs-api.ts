@@ -3,6 +3,7 @@
  * All Supabase read/write operations for the jobs section.
  * All queries scoped to the current authenticated user.
  * Fixed: date filter, match score ordering, user scoping.
+ * Added: fetchedAt from created_at, composite sort in fetchRecentMatches.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -48,13 +49,10 @@ async function getUserId(): Promise<string> {
 export async function fetchJobs(filters: JobFilters = {}): Promise<Job[]> {
   const userId = await getUserId();
 
-  // FIX: removed 7-day cutoff — show ALL jobs, not just last 7 days
-  // This was causing "empty jobs page" after scraping older data
   let query = supabase
     .from("jobs")
     .select("*")
     .eq("user_id", userId)
-    // FIX: sort by match_score DESC first (nulls last), then date
     .order("match_score", { ascending: false, nullsFirst: false })
     .order("date_found", { ascending: false });
 
@@ -88,7 +86,6 @@ export async function updateJobStatus(
   if (error) throw new Error(error.message);
 }
 
-// FIX: added deleteJob function
 export async function deleteJob(jobId: string): Promise<void> {
   const userId = await getUserId();
   const { error } = await supabase
@@ -102,20 +99,45 @@ export async function deleteJob(jobId: string): Promise<void> {
 export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
   const userId = await getUserId();
 
-  // FIX: removed 7-day cutoff AND removed match_score >= 60 filter
-  // Show best matched + most recent regardless of when scraped
-  // nullsFirst: false ensures unmatched jobs (null score) sink to bottom
+  // Fetch a large pool ordered by created_at DESC.
+  // Client-side composite sort: last 24h by match_score DESC, then older by match_score DESC.
+  // Cannot be expressed in a single Supabase .order() chain.
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
     .eq("user_id", userId)
     .eq("status", "New")
-    .order("match_score", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(200);
 
   if (error) throw new Error(error.message);
-  return (data ?? []).map(dbToJob);
+
+  const rows = data ?? [];
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+
+  const recent: typeof rows = [];
+  const older: typeof rows = [];
+
+  for (const row of rows) {
+    const ts = row.created_at ? new Date(row.created_at as string).getTime() : 0;
+    if (ts >= cutoff) {
+      recent.push(row);
+    } else {
+      older.push(row);
+    }
+  }
+
+  // Sort each bucket by match_score DESC, nulls last
+  const byScore = (a: typeof rows[0], b: typeof rows[0]) => {
+    const sa = (a.match_score as number | null) ?? -1;
+    const sb = (b.match_score as number | null) ?? -1;
+    return sb - sa;
+  };
+
+  recent.sort(byScore);
+  older.sort(byScore);
+
+  return [...recent, ...older].slice(0, limit).map(dbToJob);
 }
 
 // ── dashboard metrics ─────────────────────────────────────────
@@ -154,7 +176,6 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
   const jobs = allJobsRes.data ?? [];
   const totalJobs = jobs.length;
 
-  // FIX: only count jobs that have actually been scored
   const scoredJobs = jobs.filter((j) => j.match_score !== null);
   const highMatchJobs = scoredJobs.filter((j) => (j.match_score ?? 0) >= 75).length;
   const matchRate =
@@ -201,9 +222,6 @@ export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
   ];
 
   return {
-    // FIX: use total jobs count instead of just today's
-    // "today" count was 0 because date_found doesn't include time,
-    // so gte("date_found", today ISO string) was failing
     jobsFoundToday: totalJobs,
     applicationsSentToday: appsTodayRes.count ?? 0,
     matchRate,
@@ -253,6 +271,10 @@ function dbToJob(row: Record<string, unknown>): Job {
     match: (row.match_score as number) ?? 0,
     location: (row.location as string) ?? "",
     dateFound: (row.date_found as string) ?? "",
+    // Map created_at → fetchedAt as a human-readable relative string
+    fetchedAt: row.created_at
+      ? formatRelativeTime(row.created_at as string)
+      : undefined,
     status: (row.status as JobStatus) ?? "New",
     jobUrl: (row.job_url as string) ?? "",
   };

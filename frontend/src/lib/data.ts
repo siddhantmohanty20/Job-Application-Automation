@@ -18,6 +18,7 @@ export type Job = {
   match: number
   location: string
   dateFound: string
+  fetchedAt?: string   // relative time from created_at e.g. "2h ago"
   status: JobStatus
   jobUrl?: string
 }
