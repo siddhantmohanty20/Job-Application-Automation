@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from "react"
 import { Card } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CompanyAvatar, MatchBadge, PlatformBadge } from "@/components/shared-badges"
 import { type Job } from "@/lib/data"
-import { fetchRecentMatches } from "@/lib/jobs-api"
+import { fetchRecentMatches, updateJobStatus, logActivity } from "@/lib/jobs-api"
 import { createApplication } from "@/lib/applications-api"
-import { ExternalLink, Check } from "lucide-react"
+import { ExternalLink, Check, X } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -13,6 +14,7 @@ export function RecentMatches() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
   const [applyingId, setApplyingId] = useState<string | null>(null)
+  const [skippingId, setSkippingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -38,7 +40,6 @@ export function RecentMatches() {
         role: job.role,
         method: "Easy Apply",
       })
-      // remove from list and fetch replacement
       const remaining = jobs.filter((j) => j.id !== job.id)
       const fresh = await fetchRecentMatches(6)
       const currentIds = new Set(remaining.map((j) => j.id))
@@ -56,10 +57,35 @@ export function RecentMatches() {
     }
   }
 
+  async function handleSkip(job: Job) {
+    if (skippingId === job.id) return
+    setSkippingId(job.id)
+    try {
+      // Sets status = "Skipped" in DB.
+      // Job stays in DB for deduplication — scraper won't re-insert it.
+      // fetchRecentMatches filters status = "New" so it disappears from dashboard.
+      await updateJobStatus(job.id, "Skipped")
+      await logActivity("scrape", `Skipped ${job.role} at ${job.company}`)
+
+      const remaining = jobs.filter((j) => j.id !== job.id)
+      const fresh = await fetchRecentMatches(6)
+      const currentIds = new Set(remaining.map((j) => j.id))
+      const replacement = fresh.find((j) => !currentIds.has(j.id) && j.status === "New")
+      setJobs(replacement ? [...remaining, replacement] : remaining)
+      toast.success("Job skipped")
+    } catch {
+      toast.error("Failed to skip job")
+    } finally {
+      setSkippingId(null)
+    }
+  }
+
   return (
     <Card className="flex flex-col gap-1 p-5">
       <h2 className="text-base font-semibold text-foreground">Recent Job Matches</h2>
-      <p className="mb-2 text-sm text-muted-foreground">Top scoring jobs found today</p>
+      <p className="mb-2 text-sm text-muted-foreground">
+        Last 24h jobs ranked by match score, then older matches
+      </p>
       <div className="flex flex-col gap-3">
         {loading
           ? Array.from({ length: 5 }).map((_, i) => (
@@ -83,6 +109,7 @@ export function RecentMatches() {
                 key={job.id}
                 className="flex flex-col gap-3 rounded-lg border border-border bg-background/40 p-4 transition-colors hover:bg-accent/40 sm:flex-row sm:items-center sm:justify-between"
               >
+                {/* Left: company + role info */}
                 <div className="flex items-center gap-3">
                   <CompanyAvatar name={job.company} />
                   <div className="flex flex-col gap-1">
@@ -90,13 +117,21 @@ export function RecentMatches() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm text-muted-foreground">{job.company}</span>
                       <PlatformBadge platform={job.platform} />
+                      {/* Fetch time from created_at */}
+                      {job.fetchedAt && (
+                        <span className="text-xs text-muted-foreground/60">
+                          fetched {job.fetchedAt}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
+
+                {/* Right: match badge + action buttons */}
                 <div className="flex items-center justify-between gap-3 sm:justify-end">
                   <MatchBadge score={job.match} />
                   <div className="flex items-center gap-2">
-                    {/* View JD — native anchor, never blocked */}
+                    {/* View JD */}
                     {job.jobUrl ? (
                       <a
                         href={job.jobUrl}
@@ -112,7 +147,7 @@ export function RecentMatches() {
                       </span>
                     )}
 
-                    {/* Apply Now — native anchor opens tab + records application */}
+                    {/* Apply Now */}
                     {job.status === "Applied" ? (
                       <span className="inline-flex items-center gap-1.5 rounded-md bg-success/15 px-3 py-1.5 text-sm font-medium text-success">
                         <Check className="size-3.5" /> Applied
@@ -135,6 +170,18 @@ export function RecentMatches() {
                         No URL
                       </span>
                     )}
+
+                    {/* Skip — status="Skipped" in DB, removed from dashboard, kept for dedup */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Skip this job"
+                      disabled={skippingId === job.id}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => handleSkip(job)}
+                    >
+                      <X className="size-4" />
+                    </Button>
                   </div>
                 </div>
               </div>
