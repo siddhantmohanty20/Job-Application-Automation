@@ -32,7 +32,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
     Skipped: "bg-muted text-muted-foreground border-border",
   }[status]
   return (
-    <Badge variant="outline" className={cn("font-medium", cls)}>
+    <Badge variant="outline" className={cn("font-medium text-xs", cls)}>
       {status}
     </Badge>
   )
@@ -151,7 +151,7 @@ export function JobsTable() {
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:flex">
           <Select value={platform} onValueChange={(v) => setPlatform(v as Platform | "all")}>
-            <SelectTrigger className="w-full lg:w-36">
+            <SelectTrigger className="w-full lg:w-32">
               <SelectValue placeholder="Platform" />
             </SelectTrigger>
             <SelectContent>
@@ -165,7 +165,7 @@ export function JobsTable() {
             </SelectContent>
           </Select>
           <Select value={score} onValueChange={(v) => setScore(v as "all" | "high" | "mid" | "low")}>
-            <SelectTrigger className="w-full lg:w-32">
+            <SelectTrigger className="w-full lg:w-28">
               <SelectValue placeholder="Match" />
             </SelectTrigger>
             <SelectContent>
@@ -176,7 +176,7 @@ export function JobsTable() {
             </SelectContent>
           </Select>
           <Select value={status} onValueChange={(v) => setStatus(v as JobStatus | "all")}>
-            <SelectTrigger className="w-full lg:w-32">
+            <SelectTrigger className="w-full lg:w-28">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -198,9 +198,27 @@ export function JobsTable() {
         </div>
       </div>
 
-      {/* Scrollable table — fixed height so it doesn't overflow the page */}
+      {/* Table */}
       <ScrollArea className="h-[60vh] w-full">
-        <Table>
+        <Table className="table-fixed w-full">
+          <colgroup>
+            {/* Company: fixed */}
+            <col className="w-[140px]" />
+            {/* Role: takes remaining space */}
+            <col />
+            {/* Platform: fixed */}
+            <col className="w-[110px]" />
+            {/* Match: fixed */}
+            <col className="w-[80px]" />
+            {/* Location: fixed, truncated */}
+            <col className="w-[130px]" />
+            {/* Date: fixed */}
+            <col className="w-[96px]" />
+            {/* Status: fixed */}
+            <col className="w-[80px]" />
+            {/* Actions: fixed */}
+            <col className="w-[120px]" />
+          </colgroup>
           <TableHeader className="sticky top-0 z-10 bg-card">
             <TableRow className="hover:bg-transparent">
               <TableHead>Company</TableHead>
@@ -208,7 +226,7 @@ export function JobsTable() {
               <TableHead>Platform</TableHead>
               <TableHead>Match</TableHead>
               <TableHead>Location</TableHead>
-              <TableHead>Date Found</TableHead>
+              <TableHead>Date</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -219,53 +237,80 @@ export function JobsTable() {
                   <TableRow key={i}>
                     {Array.from({ length: 8 }).map((__, j) => (
                       <TableCell key={j}>
-                        <Skeleton className="h-6 w-full" />
+                        <Skeleton className="h-5 w-full" />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
               : filtered.map((job) => (
                   <TableRow key={job.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
+                    {/* Company */}
+                    <TableCell className="py-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
                         <CompanyAvatar name={job.company} size="sm" />
-                        <span className="font-medium text-foreground">{job.company}</span>
+                        <span className="font-medium text-foreground text-sm truncate">
+                          {job.company}
+                        </span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-foreground max-w-[200px] truncate">
-                      {job.role}
+
+                    {/* Role */}
+                    <TableCell className="py-2">
+                      <span
+                        className="block text-sm text-foreground truncate"
+                        title={job.role}
+                      >
+                        {job.role}
+                      </span>
                     </TableCell>
-                    <TableCell>
+
+                    {/* Platform */}
+                    <TableCell className="py-2">
                       <PlatformBadge platform={job.platform} />
                     </TableCell>
-                    <TableCell>
+
+                    {/* Match */}
+                    <TableCell className="py-2">
                       <MatchBadge score={job.match} />
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {job.location}
+
+                    {/* Location — truncated with tooltip */}
+                    <TableCell className="py-2">
+                      <span
+                        className="block text-xs text-muted-foreground truncate"
+                        title={job.location}
+                      >
+                        {job.location || "—"}
+                      </span>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
+
+                    {/* Date Found */}
+                    <TableCell className="py-2 text-xs text-muted-foreground whitespace-nowrap">
                       {job.dateFound}
                     </TableCell>
-                    <TableCell>
+
+                    {/* Status */}
+                    <TableCell className="py-2">
                       <StatusBadge status={job.status} />
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center justify-end gap-1">
+
+                    {/* Actions — 4 icon buttons, tight gap */}
+                    <TableCell className="py-2">
+                      <div className="flex items-center justify-end gap-0.5">
                         {/* View JD */}
                         {job.jobUrl ? (
                           <a
                             href={job.jobUrl}
                             target="_blank"
                             rel="noreferrer noopener"
-                            className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                            className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title="View JD"
                           >
-                            <ExternalLink className="size-4" />
+                            <ExternalLink className="size-3.5" />
                           </a>
                         ) : (
-                          <span className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground opacity-30 cursor-not-allowed">
-                            <ExternalLink className="size-4" />
+                          <span className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground opacity-30 cursor-not-allowed">
+                            <ExternalLink className="size-3.5" />
                           </span>
                         )}
 
@@ -276,21 +321,21 @@ export function JobsTable() {
                             target="_blank"
                             rel="noreferrer noopener"
                             onClick={() => recordApplication(job)}
-                            className="inline-flex items-center justify-center rounded-md p-2 text-success hover:bg-accent transition-colors"
+                            className="inline-flex items-center justify-center rounded-md p-1.5 text-success hover:bg-accent transition-colors"
                             title="Apply"
                           >
-                            <Check className="size-4" />
+                            <Check className="size-3.5" />
                           </a>
                         ) : (
                           <span
                             className={cn(
-                              "inline-flex items-center justify-center rounded-md p-2",
+                              "inline-flex items-center justify-center rounded-md p-1.5",
                               job.status === "Applied"
                                 ? "text-success opacity-50 cursor-not-allowed"
                                 : "text-muted-foreground opacity-30 cursor-not-allowed"
                             )}
                           >
-                            <Check className="size-4" />
+                            <Check className="size-3.5" />
                           </span>
                         )}
 
@@ -300,10 +345,10 @@ export function JobsTable() {
                           size="icon"
                           title="Skip"
                           disabled={actionId === job.id || job.status === "Skipped"}
-                          className="text-muted-foreground"
+                          className="size-7 text-muted-foreground hover:text-foreground"
                           onClick={() => handleSkip(job)}
                         >
-                          <X className="size-4" />
+                          <X className="size-3.5" />
                         </Button>
 
                         {/* Delete */}
@@ -312,10 +357,10 @@ export function JobsTable() {
                           size="icon"
                           title="Delete"
                           disabled={actionId === job.id}
-                          className="text-muted-foreground hover:text-danger"
+                          className="size-7 text-muted-foreground hover:text-destructive"
                           onClick={() => handleDelete(job)}
                         >
-                          <Trash2 className="size-4" />
+                          <Trash2 className="size-3.5" />
                         </Button>
                       </div>
                     </TableCell>
