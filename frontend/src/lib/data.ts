@@ -39,6 +39,7 @@ export type Application = {
   recruiterEmail: string | null
   recruiterName?: string 
   jobId?: string
+  fetchedAt?: string
 }
 
 // deterministic color from company name

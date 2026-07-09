@@ -3,7 +3,7 @@
  * All Supabase read/write operations for the jobs section.
  * All queries scoped to the current authenticated user.
  * Fixed: date filter, match score ordering, user scoping.
- * Added: fetchedAt from created_at, composite sort in fetchRecentMatches.
+ * Added: fetchedAt from created_at, paginated composite sort in fetchRecentMatches.
  */
 
 import { supabase } from "@/lib/supabase";
@@ -34,6 +34,11 @@ export type ActivityEntry = {
   type: "scrape" | "apply" | "email" | "resume" | "match";
   message: string;
   time: string;
+};
+
+export type RecentMatchesPage = {
+  jobs: Job[];
+  hasMore: boolean;
 };
 
 // ── helper ────────────────────────────────────────────────────
@@ -96,48 +101,163 @@ export async function deleteJob(jobId: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function fetchRecentMatches(limit = 5): Promise<Job[]> {
-  const userId = await getUserId();
+/**
+ * Paginated recent matches with composite sort:
+ *   1. Recent jobs (< 24h old) sorted by match_score DESC
+ *   2. Older jobs sorted by match_score DESC
+ *
+ * We maintain two independent Supabase cursors via `match_score` + `id` keyset pagination:
+ * - "recent" bucket: created_at >= cutoff, order by match_score DESC, id DESC
+ * - "older"  bucket: created_at <  cutoff, order by match_score DESC, id DESC
+ *
+ * The caller tracks `recentExhausted`, `recentCursor`, and `olderCursor` across pages.
+ * On each call we fill from recent first; once exhausted we fill from older.
+ *
+ * Cursor shape: { score: number | null; id: string } — the last item of the previous page.
+ */
+export type MatchCursor = {
+  score: number | null;
+  id: string;
+} | null;
 
-  // Fetch a large pool ordered by created_at DESC.
-  // Client-side composite sort: last 24h by match_score DESC, then older by match_score DESC.
-  // Cannot be expressed in a single Supabase .order() chain.
-  const { data, error } = await supabase
+export type FetchRecentMatchesOptions = {
+  pageSize?: number;
+  recentExhausted?: boolean;
+  recentCursor?: MatchCursor;
+  olderCursor?: MatchCursor;
+};
+
+export type FetchRecentMatchesResult = {
+  jobs: Job[];
+  recentExhausted: boolean;
+  recentCursor: MatchCursor;
+  olderCursor: MatchCursor;
+  hasMore: boolean;
+};
+
+export async function fetchRecentMatches(
+  options: FetchRecentMatchesOptions = {}
+): Promise<FetchRecentMatchesResult> {
+  const {
+    pageSize = 50,
+    recentExhausted = false,
+    recentCursor = null,
+    olderCursor = null,
+  } = options;
+
+  const userId = await getUserId();
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  let jobs: Job[] = [];
+  let newRecentExhausted = recentExhausted;
+  let newRecentCursor = recentCursor;
+  let newOlderCursor = olderCursor;
+
+  // ── Step 1: fill from the recent bucket (< 24h) if not yet exhausted ──
+  if (!recentExhausted) {
+    let recentQuery = supabase
+      .from("jobs")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("status", "New")
+      .gte("created_at", cutoff)
+      .order("match_score", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false });
+
+    // Keyset pagination: skip past the last seen (score, id) pair
+    if (recentCursor) {
+      if (recentCursor.score !== null) {
+        // rows where score < last score, OR same score but id < last id
+        recentQuery = recentQuery.or(
+          `match_score.lt.${recentCursor.score},and(match_score.eq.${recentCursor.score},id.lt.${recentCursor.id})`
+        );
+      } else {
+        // previous page had null scores — all remaining are also null, paginate by id
+        recentQuery = recentQuery
+          .is("match_score", null)
+          .lt("id", recentCursor.id);
+      }
+    }
+
+    const { data: recentData, error: recentError } = await recentQuery.limit(pageSize);
+    if (recentError) throw new Error(recentError.message);
+
+    const recentRows = recentData ?? [];
+    jobs = recentRows.map(dbToJob);
+
+    if (recentRows.length < pageSize) {
+      // Recent bucket is now exhausted
+      newRecentExhausted = true;
+      newRecentCursor = null;
+    } else {
+      const last = recentRows[recentRows.length - 1];
+      newRecentCursor = {
+        score: last.match_score as number | null,
+        id: last.id as string,
+      };
+    }
+
+    // If recent gave us a full page, return now — no need to touch older bucket
+    if (jobs.length >= pageSize) {
+      return {
+        jobs,
+        recentExhausted: newRecentExhausted,
+        recentCursor: newRecentCursor,
+        olderCursor: newOlderCursor,
+        hasMore: true,
+      };
+    }
+  }
+
+  // ── Step 2: fill remainder (or full page) from older bucket ──
+  const needed = pageSize - jobs.length;
+
+  let olderQuery = supabase
     .from("jobs")
     .select("*")
     .eq("user_id", userId)
     .eq("status", "New")
-    .order("created_at", { ascending: false })
-    .limit(200);
+    .lt("created_at", cutoff)
+    .order("match_score", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false });
 
-  if (error) throw new Error(error.message);
-
-  const rows = data ?? [];
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-
-  const recent: typeof rows = [];
-  const older: typeof rows = [];
-
-  for (const row of rows) {
-    const ts = row.created_at ? new Date(row.created_at as string).getTime() : 0;
-    if (ts >= cutoff) {
-      recent.push(row);
+  if (olderCursor) {
+    if (olderCursor.score !== null) {
+      olderQuery = olderQuery.or(
+        `match_score.lt.${olderCursor.score},and(match_score.eq.${olderCursor.score},id.lt.${olderCursor.id})`
+      );
     } else {
-      older.push(row);
+      olderQuery = olderQuery
+        .is("match_score", null)
+        .lt("id", olderCursor.id);
     }
   }
 
-  // Sort each bucket by match_score DESC, nulls last
-  const byScore = (a: typeof rows[0], b: typeof rows[0]) => {
-    const sa = (a.match_score as number | null) ?? -1;
-    const sb = (b.match_score as number | null) ?? -1;
-    return sb - sa;
+  const { data: olderData, error: olderError } = await olderQuery.limit(needed + 1);
+  if (olderError) throw new Error(olderError.message);
+
+  const olderRows = olderData ?? [];
+  // fetch needed+1 to detect whether there's a next page
+  const hasMoreOlder = olderRows.length > needed;
+  const olderSlice = olderRows.slice(0, needed);
+
+  jobs = [...jobs, ...olderSlice.map(dbToJob)];
+
+  if (olderSlice.length > 0) {
+    const last = olderSlice[olderSlice.length - 1];
+    newOlderCursor = {
+      score: last.match_score as number | null,
+      id: last.id as string,
+    };
+  }
+
+  return {
+    jobs,
+    recentExhausted: newRecentExhausted,
+    recentCursor: newRecentCursor,
+    olderCursor: newOlderCursor,
+    hasMore: hasMoreOlder || !newRecentExhausted,
   };
-
-  recent.sort(byScore);
-  older.sort(byScore);
-
-  return [...recent, ...older].slice(0, limit).map(dbToJob);
 }
 
 // ── dashboard metrics ─────────────────────────────────────────
@@ -271,7 +391,6 @@ function dbToJob(row: Record<string, unknown>): Job {
     match: (row.match_score as number) ?? 0,
     location: (row.location as string) ?? "",
     dateFound: (row.date_found as string) ?? "",
-    // Map created_at → fetchedAt as a human-readable relative string
     fetchedAt: row.created_at
       ? formatRelativeTime(row.created_at as string)
       : undefined,
